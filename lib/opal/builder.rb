@@ -6,10 +6,18 @@ module Opal
   class Builder
     include BuilderProcessors
 
+    OPTIONS = [
+      :stubs,
+      :preload,
+      :processors,
+      :path_reader,
+      :prerequired,
+      :compiler_options,
+      :default_processor,
+    ]
+
     def initialize(options = nil)
-      (options || {}).each_pair do |k,v|
-        public_send("#{k}=", v)
-      end
+      (options || {}).each_pair { |k,v| send("#{k}=", v) }
 
       @compiler_options  ||= {}
       @default_processor ||= RubyProcessor
@@ -52,15 +60,14 @@ module Opal
       processed.map(&:source_map).reduce(:+).as_json.to_json
     end
 
-    attr_reader :processed
-
-    attr_accessor :processors, :default_processor, :path_reader,
-                  :compiler_options, :stubs, :prerequired, :preload
+    attr_reader :processed, *OPTIONS
 
 
 
 
     private
+
+    attr_writer *OPTIONS
 
     def tree_requires(asset, path)
       if path.nil? or path.empty?
