@@ -19,13 +19,13 @@ module Opal
     def initialize(options = nil)
       (options || {}).each_pair { |k,v| send("#{k}=", v) }
 
+      @stubs             ||= []
+      @preload           ||= []
+      @processors        ||= DEFAULT_PROCESSORS
+      @path_reader       ||= PathReader.new
+      @prerequired       ||= []
       @compiler_options  ||= {}
       @default_processor ||= RubyProcessor
-      @processors  ||= DEFAULT_PROCESSORS
-      @stubs       ||= []
-      @preload     ||= []
-      @prerequired ||= []
-      @path_reader ||= PathReader.new
 
       @processed = []
     end
