@@ -28,6 +28,10 @@ module Opal
       @array[1..-1]
     end
 
+    def meta
+      @meta ||= {}
+    end
+
     def method_missing(sym, *args, &block)
       @array.send sym, *args, &block
     end
@@ -39,6 +43,11 @@ module Opal
 
     def push(*parts)
       @array.push(*parts)
+      self
+    end
+
+    def concat(children)
+      @array.concat(children)
       self
     end
 

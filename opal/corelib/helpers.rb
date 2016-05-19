@@ -1,4 +1,8 @@
 module Opal
+  def self.bridge(klass, constructor)
+    `Opal.bridge(klass, constructor)`
+  end
+
   def self.type_error(object, type, method = nil, coerced = nil)
     if method && coerced
       TypeError.new "can't convert #{object.class} into #{type} (#{object.class}##{method} gives #{coerced.class}"
@@ -68,7 +72,10 @@ module Opal
         return args;
       }
       else {
-        return $slice.call(args);
+        var args_ary = new Array(args.length);
+        for(var i = 0, l = args_ary.length; i < l; i++) { args_ary[i] = args[i]; }
+
+        return args_ary;
       }
     }
   end
@@ -98,5 +105,25 @@ module Opal
         return #{obj.inspect};
       }
     }
+  end
+
+  def self.instance_variable_name!(name)
+    name = Opal.coerce_to!(name, String, :to_str)
+
+    unless `/^@[a-zA-Z_][a-zA-Z0-9_]*?$/.test(name)`
+      raise NameError.new("'#{name}' is not allowed as an instance variable name", name)
+    end
+
+    name
+  end
+
+  def self.const_name!(const_name)
+    const_name = Opal.coerce_to!(const_name, String, :to_str)
+
+    if const_name[0] != const_name[0].upcase
+      raise NameError, "wrong constant name #{const_name}"
+    end
+
+    const_name
   end
 end

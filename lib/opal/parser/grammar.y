@@ -5,22 +5,22 @@ token kCLASS kMODULE kDEF kUNDEF kBEGIN kRESCUE kENSURE kEND kIF kUNLESS
       kREDO kRETRY kIN kDO kDO_COND kDO_BLOCK kDO_LAMBDA kRETURN kYIELD kSUPER
       kSELF kNIL kTRUE kFALSE kAND kOR kNOT kIF_MOD kUNLESS_MOD kWHILE_MOD
       kUNTIL_MOD kRESCUE_MOD kALIAS kDEFINED klBEGIN klEND k__LINE__
-      k__FILE__ k__ENCODING__ tIDENTIFIER tFID tGVAR tIVAR tCONSTANT
+      k__FILE__ tIDENTIFIER tFID tGVAR tIVAR tCONSTANT
       tLABEL tCVAR tNTH_REF tBACK_REF tSTRING_CONTENT tINTEGER tFLOAT
-      tREGEXP_END tUPLUS tUMINUS tUMINUS_NUM tPOW tCMP tEQ tEQQ tNEQ tGEQ tLEQ tANDOP
+      tREGEXP_END tUPLUS tUMINUS tPOW tCMP tEQ tEQQ tNEQ tGEQ tLEQ tANDOP
       tOROP tMATCH tNMATCH tJSDOT tDOT tDOT2 tDOT3 tAREF tASET tLSHFT tRSHFT
       tCOLON2 tCOLON3 tOP_ASGN tASSOC tLPAREN tLPAREN2 tRPAREN tLPAREN_ARG
-      ARRAY_BEG tRBRACK tLBRACE tLBRACE_ARG tSTAR tSTAR2 tAMPER tAMPER2
+      tRBRACK tLBRACE tLBRACE_ARG tSTAR tSTAR2 tAMPER tAMPER2
       tTILDE tPERCENT tDIVIDE tPLUS tMINUS tLT tGT tPIPE tBANG tCARET
       tLCURLY tRCURLY tBACK_REF2 tSYMBEG tSTRING_BEG tXSTRING_BEG tREGEXP_BEG
       tWORDS_BEG tAWORDS_BEG tSTRING_DBEG tSTRING_DVAR tSTRING_END tSTRING
       tSYMBOL tNL tEH tCOLON tCOMMA tSPACE tSEMI tLAMBDA tLAMBEG
-      tLBRACK2 tLBRACK tJSLBRACK tDSTAR
+      tLBRACK2 tLBRACK tJSLBRACK tDSTAR tLABEL_END tEQL
 
 prechigh
   right    tBANG tTILDE tUPLUS
   right    tPOW
-  right    tUMINUS_NUM tUMINUS
+  right    tUMINUS
   left     tSTAR2 tDIVIDE tPERCENT
   left     tPLUS tMINUS
   left     tLSHFT tRSHFT
@@ -137,10 +137,7 @@ rule
                       result = new_rescue_mod(val[1], val[0], val[2])
                     }
                 | klEND tLCURLY compstmt tRCURLY
-                | lhs tEQL command_call
-                    {
-                      result = new_assign(val[0], val[1], val[2])
-                    }
+                | command_asgn
                 | mlhs tEQL command_call
                     {
                       result = s(:masgn, val[0], s(:to_ary, val[2]))
@@ -172,6 +169,15 @@ rule
                     }
                 | expr
 
+    command_asgn: lhs tEQL command_call
+                    {
+                      result = new_assign(val[0], val[1], val[2])
+                    }
+                | lhs tEQL command_asgn
+                    {
+                      result = new_assign(val[0], val[1], val[2])
+                    }
+
             expr: command_call
                 | expr kAND expr
                     {
@@ -195,6 +201,57 @@ rule
 
     command_call: command
                 | block_command
+
+   block_command: block_call
+                | block_call tJSDOT operation2 command_args
+                | block_call tDOT operation2 command_args
+                | block_call tCOLON2 operation2 command_args
+
+ cmd_brace_block: tLBRACE_ARG opt_block_var compstmt tRCURLY
+                    {
+                      result = new_iter(val[1], val[2])
+                    }
+
+         command: operation command_args =tLOWEST
+                    {
+                      result = new_call(nil, val[0], val[1])
+                    }
+                | operation command_args cmd_brace_block
+                    {
+                      result = new_call(nil, val[0], val[1]) << val[2]
+                    }
+                | primary_value tJSDOT operation2 command_args =tLOWEST
+                    {
+                      result = new_js_call(val[0], val[2], val[3])
+                    }
+                | primary_value tJSDOT operation2 command_args cmd_brace_block
+                    {
+                      result = new_js_call(val[0], val[2], val[3]) << val[4]
+                    }
+                | primary_value tDOT operation2 command_args =tLOWEST
+                    {
+                      result = new_call(val[0], val[2], val[3])
+                    }
+                | primary_value tDOT operation2 command_args cmd_brace_block
+                    {
+                      result = new_call(val[0], val[2], val[3]) << val[4]
+                    }
+                | primary_value tCOLON2 operation2 command_args =tLOWEST
+                    {
+                      result = new_call(val[0], val[2], val[3])
+                    }
+                | primary_value tCOLON2 operation2 command_args cmd_brace_block
+                    {
+                      result = new_call(val[0], val[2], val[3]) << val[4]
+                    }
+                | kSUPER command_args
+                    {
+                      result = new_super(val[0], val[1])
+                    }
+                | kYIELD command_args
+                    {
+                      result = new_yield val[1]
+                    }
                 | kRETURN call_args
                     {
                       result = new_return(val[0], val[1])
@@ -206,42 +263,6 @@ rule
                 | kNEXT call_args
                     {
                       result = new_next(val[0], val[1])
-                    }
-
-   block_command: block_call
-                | block_call tJSDOT operation2 command_args
-                | block_call tDOT operation2 command_args
-                | block_call tCOLON2 operation2 command_args
-
- cmd_brace_block: tLBRACE_ARG opt_block_var compstmt tRCURLY
-
-         command: operation command_args =tLOWEST
-                    {
-                      result = new_call(nil, val[0], val[1])
-                    }
-                | operation command_args cmd_brace_block
-                | primary_value tJSDOT operation2 command_args =tLOWEST
-                    {
-                      result = new_js_call(val[0], val[2], val[3])
-                    }
-                | primary_value tJSDOT operation2 command_args cmd_brace_block
-                | primary_value tDOT operation2 command_args =tLOWEST
-                    {
-                      result = new_call(val[0], val[2], val[3])
-                    }
-                | primary_value tDOT operation2 command_args cmd_brace_block
-                | primary_value tCOLON2 operation2 command_args =tLOWEST
-                  {
-                    result = new_call(val[0], val[2], val[3])
-                  }
-                | primary_value tCOLON2 operation2 command_args cmd_brace_block
-                | kSUPER command_args
-                    {
-                      result = new_super(val[0], val[1])
-                    }
-                | kYIELD command_args
-                    {
-                      result = new_yield val[1]
                     }
 
             mlhs: mlhs_basic
@@ -275,20 +296,33 @@ rule
                       result = val[0] << s(:splat, val[2])
                     }
                 | mlhs_head tSTAR mlhs_node tCOMMA mlhs_post
+                   {
+                     result = (val[0] << s(:splat, val[2])).concat(val[4].children)
+                   }
                 | mlhs_head tSTAR
                     {
                       result = val[0] << s(:splat)
                     }
                 | mlhs_head tSTAR tCOMMA mlhs_post
+                    {
+                      result = (val[0] << s(:splat)).concat(val[3].children)
+                    }
                 | tSTAR mlhs_node
                     {
                       result = s(:array, s(:splat, val[1]))
+                    }
+                | tSTAR mlhs_node tCOMMA mlhs_post
+                    {
+                      result = s(:array, s(:splat, val[1])).concat(val[3].children)
                     }
                 | tSTAR
                     {
                       result = s(:array, s(:splat))
                     }
                 | tSTAR tCOMMA mlhs_post
+                    {
+                      result = s(:array, s(:splat)).concat(val[2].children)
+                    }
 
        mlhs_item: mlhs_node
                     {
@@ -309,7 +343,13 @@ rule
                     }
 
        mlhs_post: mlhs_item
+                    {
+                      result = s(:array, val[0])
+                    }
                 | mlhs_post tCOMMA mlhs_item
+                    {
+                      result = val[0] << val[2]
+                    }
 
        mlhs_node: variable
                     {
@@ -552,8 +592,7 @@ rule
                     }
                 | arg tNEQ arg
                     {
-                      result = new_unary_call(['!', []], new_binary_call(
-                                 val[0], ['==', []], val[2]))
+                      result = new_binary_call(val[0], val[1], val[2])
                     }
                 | arg tMATCH arg
                     {
@@ -561,8 +600,7 @@ rule
                     }
                 | arg tNMATCH arg
                     {
-                      result = new_not(val[1], new_binary_call(
-                                 val[0], ['=~', []], val[2]))
+                      result = new_binary_call(val[0], val[1], val[2])
                     }
                 | tBANG arg
                     {
@@ -592,9 +630,9 @@ rule
                     {
                       result = s(:defined, val[2])
                     }
-                | arg tEH arg tCOLON arg
+                | arg tEH { lexer.cond_push 1 } arg tCOLON { lexer.cond_pop } arg
                     {
-                      result = new_if(val[1], val[0], val[2], val[4])
+                      result = new_if(val[1], val[0], val[3], val[6])
                     }
                 | primary
 
@@ -621,6 +659,11 @@ rule
                     {
                       result = [s(:hash, *val[0])]
                     }
+                | args tCOMMA block_arg
+                    {
+                      result = val[0] << val[2]
+                    }
+
 
       paren_args: tLPAREN2 opt_call_args rparen
                     {
@@ -672,6 +715,7 @@ rule
                     {
                       result = val[0]
                       result << new_hash(nil, val[2], nil)
+                      result << val[3] if val[3]
                     }
                 | block_arg
                     {
@@ -679,25 +723,12 @@ rule
                       add_block_pass result, val[0]
                     }
 
-      call_args2: arg_value tCOMMA args opt_block_arg
-                | block_arg
-
     command_args:   {
                       lexer.cmdarg_push 1
                     }
-                    open_args
+                    call_args
                     {
                       lexer.cmdarg_pop
-                      result = val[1]
-                    }
-
-       open_args: call_args
-                | tLPAREN_ARG tRPAREN
-                    {
-                      result = nil
-                    }
-                | tLPAREN_ARG call_args2 tRPAREN
-                    {
                       result = val[1]
                     }
 
@@ -764,9 +795,21 @@ rule
                     {
                       result = s(:begin, val[2])
                     }
-                | tLPAREN_ARG expr opt_nl tRPAREN
+                | tLPAREN_ARG expr
+                    {
+                      lexer.lex_state = :expr_endarg
+                    }
+                    opt_nl tRPAREN
                     {
                       result = val[1]
+                    }
+                | tLPAREN_ARG
+                    {
+                      lexer.lex_state = :expr_endarg
+                    }
+                    opt_nl tRPAREN
+                    {
+                      result = new_nil(val[0])
                     }
                 | tLPAREN compstmt tRPAREN
                     {
@@ -832,8 +875,7 @@ rule
                 | method_call
                 | method_call brace_block
                     {
-                      val[0] << val[1]
-                      result = val[0]
+                      result = new_method_call_with_block(val[0], val[1])
                     }
                 | tLAMBDA lambda
                     {
@@ -933,7 +975,6 @@ rule
                 | kDEF fname
                     {
                       push_scope
-                      lexer.lex_state = :expr_endfn
                     }
                     f_arglist bodystmt kEND
                     {
@@ -979,6 +1020,31 @@ rule
                 | tCOLON
                 | kDO_COND
 
+
+     opt_bv_decl: opt_nl
+                    {
+                      result = []
+                    }
+                | opt_nl tSEMI bv_decls opt_nl
+                    {
+                      result = val[2]
+                    }
+
+        bv_decls: bvar
+                    {
+                      result = [ val[0] ]
+                    }
+                | bv_decls tCOMMA bvar
+                    {
+                      result = val[0] << val[2]
+                    }
+
+            bvar: tIDENTIFIER
+                    {
+                      result = new_shadowarg(val[0])
+                    }
+                | f_bad_arg
+
           lambda: f_larglist lambda_body
                     {
                       result = new_call nil, [:lambda, []], []
@@ -987,13 +1053,16 @@ rule
 
       f_larglist: tLPAREN2 block_param tRPAREN
                     {
-                      result = val[1]
+                      result = new_block_args(*val[1])
                     }
                 | tLPAREN2 tRPAREN
                     {
                       result = nil
                     }
                 | block_param
+                    {
+                      result = new_block_args(*val[0])
+                    }
                 | none
 
      lambda_body: tLAMBEG compstmt tRCURLY
@@ -1037,22 +1106,35 @@ rule
                     }
 
    opt_block_var: none
-                | tPIPE tPIPE
+                | tPIPE opt_bv_decl tPIPE
                     {
-                      result = nil
+                      result = new_block_args(nil, [val[1]])
                     }
                 | tOROP
                     {
                       result = nil
                     }
-                | tPIPE block_param tPIPE
+                | tPIPE block_param opt_bv_decl tPIPE
                     {
-                      result = val[1]
+                      val[1] << val[2]
+                      result = new_block_args(*val[1])
                     }
 
- block_args_tail: f_block_arg
+ block_args_tail: f_block_kwarg tCOMMA f_kwrest opt_f_block_arg
                     {
-                      result = val[0]
+                      result = [val[0], val[2], val[3]]
+                    }
+                | f_block_kwarg opt_f_block_arg
+                    {
+                      result = [val[0], nil, val[1]]
+                    }
+                | f_kwrest opt_f_block_arg
+                    {
+                      result = [nil, val[0], val[1]]
+                    }
+                | f_block_arg
+                    {
+                      result = [nil, nil, val[0]]
                     }
 
 opt_block_args_tail: tCOMMA block_args_tail
@@ -1066,39 +1148,80 @@ opt_block_args_tail: tCOMMA block_args_tail
 
      block_param: f_arg tCOMMA f_block_optarg tCOMMA f_rest_arg opt_block_args_tail
                     {
-                      result = new_block_args(val[0], val[2], val[4], val[5])
+                      optarg = new_optarg(val[2])
+                      restarg = new_restarg(val[4])
+                      result = [val[0] + optarg + restarg, val[5]]
+                    }
+                | f_arg tCOMMA f_block_optarg tCOMMA f_rest_arg tCOMMA f_arg opt_block_args_tail
+                    {
+                      optarg = new_optarg(val[2])
+                      restarg = new_restarg(val[4])
+                      result = [val[0] + optarg + restarg + val[6], val[7]]
                     }
                 | f_arg tCOMMA f_block_optarg opt_block_args_tail
                     {
-                      result = new_block_args(val[0], val[2], nil, val[3])
+                      optarg = new_optarg(val[2])
+                      result = [val[0] + optarg, val[3]]
+                    }
+                | f_arg tCOMMA f_block_optarg tCOMMA f_arg opt_block_args_tail
+                    {
+                      optarg = new_optarg(val[2])
+                      result = [val[0] + optarg + val[4], val[5]]
                     }
                 | f_arg tCOMMA f_rest_arg opt_block_args_tail
                     {
-                      result = new_block_args(val[0], nil, val[2], val[3])
+                      restarg = new_restarg(val[2])
+                      result = [val[0] + restarg, val[3]]
                     }
                 | f_arg tCOMMA
                     {
-                      result = new_block_args(val[0], nil, nil, nil)
+                      val[0] << nil
+                      result = [val[0], nil]
+                    }
+                | f_arg tCOMMA f_rest_arg tCOMMA f_arg opt_block_args_tail
+                    {
+                      restarg = new_restarg(val[2])
+                      result = [val[0] + restarg + val[4], val[5]]
                     }
                 | f_arg opt_block_args_tail
                     {
-                      result = new_block_args(val[0], nil, nil, val[1])
+                      result = [val[0], val[1]]
                     }
                 | f_block_optarg tCOMMA f_rest_arg opt_block_args_tail
                     {
-                      result = new_block_args(nil, val[0], val[2], val[3])
+                      optarg = new_optarg(val[0])
+                      restarg = new_restarg(val[2])
+                      result = [optarg + restarg, val[3]]
+                    }
+                | f_block_optarg tCOMMA f_rest_arg tCOMMA f_arg opt_block_args_tail
+                    {
+                      optarg = new_optarg(val[0])
+                      restarg = new_restarg(val[2])
+                      result = [optarg + restarg + val[4], val[5]]
                     }
                 | f_block_optarg opt_block_args_tail
                     {
-                      result = new_block_args(nil, val[0], nil, val[1])
+                      optarg= new_optarg(val[0])
+                      result = [optarg, val[1]]
+                    }
+                | f_block_optarg tCOMMA f_arg opt_block_args_tail
+                    {
+                      optarg = new_optarg(val[0])
+                      result = [optarg + val[2], val[3]]
                     }
                 | f_rest_arg opt_block_args_tail
                     {
-                      result = new_block_args(nil, nil, val[0], val[1])
+                      restarg = new_restarg(val[0])
+                      result = [restarg, val[1]]
+                    }
+                | f_rest_arg tCOMMA f_arg opt_block_args_tail
+                    {
+                      restarg = new_restarg(val[0])
+                      result = [restarg + val[2], val[3]]
                     }
                 | block_args_tail
                     {
-                      result = new_block_args(nil, nil, nil, val[0])
+                      result = [nil, val[0]]
                     }
 
         do_block: kDO_BLOCK
@@ -1197,7 +1320,7 @@ opt_block_args_tail: tCOMMA block_args_tail
                       exc = val[1] || s(:array)
                       exc << new_assign(val[2], val[2], s(:gvar, '$!'.intern)) if val[2]
                       result = [s(:resbody, exc, val[4])]
-                      result.push val[5].first if val[5]
+                      result.concat val[5] if val[5]
                     }
                 | # none
                     {
@@ -1398,19 +1521,19 @@ xstring_contents: none
                     {
                       result = new_float(val[0])
                     }
-                | '-@NUM' tINTEGER =tLOWEST
+                | '-@NUM' tINTEGER =tUMINUS
                   {
                     result = negate_num(new_int(val[1]))
                   }
-                | '-@NUM' tFLOAT   =tLOWEST
+                | '-@NUM' tFLOAT   =tUMINUS
                   {
                     result = negate_num(new_float(val[1]))
                   }
-                | '+@NUM' tINTEGER =tLOWEST
+                | '+@NUM' tINTEGER
                   {
                     result = new_int(val[1])
                   }
-                | '+@NUM' tFLOAT   =tLOWEST
+                | '+@NUM' tFLOAT
                   {
                     result = new_float(val[1])
                   }
@@ -1489,7 +1612,7 @@ xstring_contents: none
                       result = nil
                     }
 
-       f_arglist: tLPAREN2 f_args opt_nl tRPAREN
+       f_arglist: tLPAREN2 f_args opt_bv_decl tRPAREN
                     {
                       result = val[1]
                       lexer.lex_state = :expr_beg
@@ -1524,6 +1647,25 @@ xstring_contents: none
                 | f_label
                     {
                       result = new_kwarg(val[0])
+                    }
+
+      f_block_kw: f_label primary_value
+                    {
+                      result = new_kwoptarg(val[0], val[1])
+                    }
+                | f_label
+                    {
+                      result = new_kwarg(val[0])
+                    }
+
+   f_block_kwarg: f_block_kw
+                    {
+                      result = [val[0]]
+                    }
+                | f_block_kwarg tCOMMA f_block_kw
+                    {
+                      result = val[0]
+                      result << val[2]
                     }
 
          f_kwarg: f_kw
@@ -1564,39 +1706,79 @@ xstring_contents: none
 
           f_args: f_arg tCOMMA f_optarg tCOMMA f_rest_arg opt_args_tail
                     {
-                      result = new_args(val[0], val[2], val[4], val[5])
+                      optarg = new_optarg(val[2])
+                      restarg = new_restarg(val[4])
+                      result = new_args(val[0] + optarg + restarg, val[5])
+                    }
+                | f_arg tCOMMA f_optarg tCOMMA f_rest_arg tCOMMA f_arg opt_args_tail
+                    {
+                      optarg = new_optarg(val[2])
+                      restarg = new_restarg(val[4])
+                      result = new_args(val[0] + optarg + restarg + val[6], val[7])
                     }
                 | f_arg tCOMMA f_optarg opt_args_tail
                     {
-                      result = new_args(val[0], val[2], nil, val[3])
+                      optarg = new_optarg(val[2])
+                      result = new_args(val[0] + optarg, val[3])
+                    }
+                | f_arg tCOMMA f_optarg tCOMMA f_arg opt_args_tail
+                    {
+                      optarg = new_optarg(val[2])
+                      result = new_args(val[0] + optarg + val[4], val[5])
                     }
                 | f_arg tCOMMA f_rest_arg opt_args_tail
                     {
-                      result = new_args(val[0], nil, val[2], val[3])
+                      restarg = new_restarg(val[2])
+                      result = new_args(val[0] + restarg, val[3])
+                    }
+                | f_arg tCOMMA f_rest_arg tCOMMA f_arg opt_args_tail
+                    {
+                      restarg = new_restarg(val[2])
+                      result = new_args(val[0] + restarg + val[4], val[5])
                     }
                 | f_arg opt_args_tail
                     {
-                      result = new_args(val[0], nil, nil, val[1])
+                      result = new_args(val[0], val[1])
                     }
                 | f_optarg tCOMMA f_rest_arg opt_args_tail
                     {
-                      result = new_args(nil, val[0], val[2], val[3])
+                      optarg = new_optarg(val[0])
+                      restarg = new_restarg(val[2])
+                      result = new_args(optarg + restarg, val[3])
+                    }
+                | f_optarg tCOMMA f_rest_arg tCOMMA f_arg opt_args_tail
+                    {
+                      optarg = new_optarg(val[0])
+                      restarg = new_restarg(val[2])
+                      result = new_args(optarg + restarg + val[4], val[5])
                     }
                 | f_optarg opt_args_tail
                     {
-                      result = new_args(nil, val[0], nil, val[1])
+                      optarg = new_optarg(val[0])
+                      result = new_args(optarg, val[1])
+                    }
+                | f_optarg tCOMMA f_arg opt_args_tail
+                    {
+                      optarg = new_optarg(val[0])
+                      result = new_args(optarg + val[2], val[3])
                     }
                 | f_rest_arg opt_args_tail
                     {
-                      result = new_args(nil, nil, val[0], val[1])
+                      optarg = new_restarg(val[0])
+                      result = new_args(optarg, val[1])
+                    }
+                | f_rest_arg tCOMMA f_arg opt_args_tail
+                    {
+                      restarg = new_restarg(val[0])
+                      result = new_args(restarg + val[2], val[3])
                     }
                 | args_tail
                     {
-                      result = new_args(nil, nil, nil, val[0])
+                      result = new_args(nil, val[0])
                     }
                 | # none
                     {
-                      result = new_args(nil, nil, nil, nil)
+                      result = new_args(nil, nil)
                     }
 
       f_norm_arg: f_bad_arg
@@ -1637,13 +1819,16 @@ xstring_contents: none
 
           f_marg: f_norm_arg
                     {
-                      result = s(:lasgn, val[0])
+                      result = s(:arg, val[0])
                     }
                 | tLPAREN f_margs tRPAREN
+                    {
+                      result = val[1]
+                    }
 
      f_marg_list: f_marg
                     {
-                      result = s(:array, val[0])
+                      result = s(:mlhs, val[0])
                     }
                 | f_marg_list tCOMMA f_marg
                     {
@@ -1653,9 +1838,39 @@ xstring_contents: none
 
          f_margs: f_marg_list
                 | f_marg_list tCOMMA tSTAR f_norm_arg
+                    {
+                      result = val[0].push(s(:restarg, val[3]))
+                    }
+                | f_marg_list tCOMMA tSTAR f_norm_arg tCOMMA f_marg_list
+                    {
+                      result = val[0].push(s(:restarg, val[3])).concat(val[5][1..-1])
+                    }
                 | f_marg_list tCOMMA tSTAR
+                    {
+                      result = val[0].push(s(:restarg))
+                    }
+                | f_marg_list tCOMMA tSTAR tCOMMA f_marg_list
+                    {
+                      result = val[0].push(s(:restarg)).concat(val[4][1..-1])
+                    }
                 | tSTAR f_norm_arg
+                    {
+                      result = s(:mlhs, s(:restarg, val[1]))
+                    }
+                | tSTAR f_norm_arg tCOMMA f_marg_list
+                    {
+                      val[3].insert(1, s(:restarg, val[1]))
+                      result = val[3]
+                    }
                 | tSTAR
+                    {
+                      result = s(:mlhs, s(:restarg))
+                    }
+                | tSTAR tCOMMA f_marg_list
+                    {
+                      val[2].insert(1, s(:restarg))
+                      result = val[2]
+                    }
 
            f_arg: f_arg_item
                     {
@@ -1735,7 +1950,7 @@ xstring_contents: none
                     }
                 | assocs tCOMMA assoc
                     {
-                      result = val[0].push(*val[2])
+                      result = val[0].concat(val[2])
                     }
 
            assoc: arg_value tASSOC arg_value
@@ -1745,6 +1960,14 @@ xstring_contents: none
                 | tLABEL arg_value
                     {
                       result = [new_sym(val[0]), val[1]]
+                    }
+                | tSTRING_BEG string_contents tLABEL_END arg_value
+                    {
+                      result = [s(:sym, source(val[1]).to_sym), val[3]]
+                    }
+                | tDSTAR arg_value
+                    {
+                      result = [new_kwsplat(val[1])]
                     }
 
        operation: tIDENTIFIER

@@ -18,20 +18,34 @@ module Opal
   def self.append_path(path)
     append_paths(path)
   end
+
+  # Same as #append_path but can take multiple paths.
   def self.append_paths(*paths)
-    self.paths.concat(paths)
+    @paths.concat(paths)
+    nil
   end
 
   module UseGem
+    # Adds the "require_paths" (usually `lib/`) of gem with the given name to
+    # Opal paths. By default will include the "require_paths" from all the
+    # dependent gems.
+    #
+    # @param gem_name [String] the name of the gem
+    # @param include_dependencies [Boolean] whether or not to add recursively
+    #   the gem's dependencies
+    # @raise [Opal::GemNotFound]
+    #   if gem or any of its runtime dependencies not found
     def use_gem(gem_name, include_dependencies = true)
       append_paths(*require_paths_for_gem(gem_name, include_dependencies))
     end
-    
+
     private
 
     def require_paths_for_gem(gem_name, include_dependencies)
       paths = []
+
       spec = Gem::Specification.find_by_name(gem_name)
+      raise GemNotFound, gem_name unless spec
 
       spec.runtime_dependencies.each do |dependency|
         paths += require_paths_for_gem(dependency.name, include_dependencies)
@@ -48,8 +62,15 @@ module Opal
 
   extend UseGem
 
-  # Private, don't add to these directly (use .append_path instead).
   def self.paths
-    @paths ||= [core_dir.untaint, std_dir.untaint, gem_dir.untaint]
+    @paths.dup.freeze
   end
+
+  # Resets Opal.paths to the default value (includes `corelib`, `stdlib`, `opal/lib`)
+  def self.reset_paths!
+    @paths = [core_dir.untaint, std_dir.untaint, gem_dir.untaint]
+    nil
+  end
+
+  reset_paths!
 end

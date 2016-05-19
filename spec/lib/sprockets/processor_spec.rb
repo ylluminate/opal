@@ -35,13 +35,14 @@ describe Opal::Processor do
 
   describe '.stubbed_files' do
     around do |e|
-      described_class.stubbed_files.clear
+      config.stubbed_files.clear
       e.run
-      described_class.stubbed_files.clear
+      config.stubbed_files.clear
     end
 
     let(:stubbed_file) { 'foo' }
     let(:template) { described_class.new { |t| "require #{stubbed_file.inspect}" } }
+    let(:config) { Opal::Config }
 
     it 'usually require files' do
       sprockets_context.should_receive(:require_asset).with(stubbed_file)
@@ -49,19 +50,30 @@ describe Opal::Processor do
     end
 
     it 'skips require of stubbed file' do
-      described_class.stub_file stubbed_file
+      config.stubbed_files << stubbed_file.to_s
       sprockets_context.should_not_receive(:require_asset).with(stubbed_file)
       template.render(sprockets_context)
     end
 
     it 'marks a stubbed file as loaded' do
-      described_class.stub_file stubbed_file
+      config.stubbed_files << stubbed_file.to_s
       asset = double(dependencies: [], pathname: Pathname('bar'), logical_path: 'bar')
       environment.stub(:[]).with('bar.js') { asset }
       environment.stub(:engines) { {'.rb' => described_class, '.opal' => described_class} }
 
-      code = described_class.load_asset_code(environment, 'bar')
+      code = ::Opal::Sprockets.load_asset('bar', environment)
       code.should match stubbed_file
+    end
+  end
+
+  describe '.cache_key' do
+    it 'can be reset' do
+      Opal::Config.arity_check_enabled = true
+      old_cache_key = described_class.cache_key
+      Opal::Config.arity_check_enabled = false
+      expect(described_class.cache_key).to eq(old_cache_key)
+      described_class.reset_cache_key!
+      expect(described_class.cache_key).not_to eq(old_cache_key)
     end
   end
 end

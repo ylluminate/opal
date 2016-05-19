@@ -8,15 +8,17 @@ require 'opal/sprockets/source_map_server'
 $OPAL_SOURCE_MAPS = {}
 
 module Opal
-  # The Processor class is used to make ruby files (with rb or opal extensions)
-  # available to any sprockets based server. Processor will then get passed any
-  # ruby source file to build.
+  # Internal: The Processor class is used to make ruby files (with .rb or .opal
+  #   extensions) available to any sprockets based server. Processor will then
+  #   get passed any ruby source file to build.
   class Processor < TiltTemplate
-    # DEPRECATED:
-    # Support legacy accessors to default options, now moved to Opal::Config
-    Opal::Config.default_config.keys.each do |config_option|
-      define_singleton_method(config_option) { Opal::Config.config[config_option] }
-      define_singleton_method("#{config_option}=") { |value| Opal::Config.config[config_option] = value }
+    @@cache_key = nil
+    def self.cache_key
+      @@cache_key ||= ['Opal', Opal::VERSION, Opal::Config.config].to_json.freeze
+    end
+
+    def self.reset_cache_key!
+      @@cache_key = nil
     end
 
     def evaluate(context, locals, &block)
@@ -27,7 +29,8 @@ module Opal
       # In Sprockets 3 logical_path has an odd behavior when the filename is "index"
       # thus we need to bake our own logical_path
       filename = context.respond_to?(:filename) ? context.filename : context.pathname.to_s
-      logical_path = filename.gsub(%r{^#{context.root_path}/?(.*?)#{sprockets_extnames_regexp}}, '\1')
+      root_path_regexp = Regexp.escape(context.root_path)
+      logical_path = filename.gsub(%r{^#{root_path_regexp}/?(.*?)#{sprockets_extnames_regexp}}, '\1')
 
       compiler_options = self.compiler_options.merge(file: logical_path)
 
@@ -64,11 +67,13 @@ module Opal
 
     def process_requires(requires, context)
       requires.each do |required|
-        required = required.sub(sprockets_extnames_regexp, '')
+        required = required.to_s.sub(sprockets_extnames_regexp, '')
         context.require_asset required unless stubbed_files.include? required
       end
     end
 
+    # Internal: Add files required with `require_tree` as asset dependencies.
+    #
     # Mimics (v2) Sprockets::DirectiveProcessor#process_require_tree_directive
     def process_required_trees(required_trees, context)
       return if required_trees.empty?
@@ -88,7 +93,7 @@ module Opal
         required_tree = dirname.join(file, '..', required_tree)
 
         unless required_tree.directory?
-          raise ArgumentError, "require_tree argument must be a directory: #{[original_required_tree, required_tree].inspect}"
+          raise ArgumentError, "require_tree argument must be a directory: #{{source: original_required_tree, pathname: required_tree}.inspect}"
         end
 
         context.depend_on required_tree.to_s
@@ -103,61 +108,35 @@ module Opal
 
         absolute_paths.each do |path|
           path = Pathname(path)
-          pathname = path.relative_path_from(dirname)
+          pathname = path.relative_path_from(dirname).to_s
 
-          if name.to_s == file
-            next
-          elsif path.directory?
-            context.depend_on(path.to_s)
-          else
-            context.require_asset(pathname)
+          if name.to_s == file  then next
+          elsif path.directory? then context.depend_on(path.to_s)
+          else context.require_asset(pathname)
           end
         end
       end
     end
 
-    def self.load_asset_code(sprockets, name)
-      asset = sprockets[name.sub(/(\.(js|rb|opal))*#{REGEXP_END}/, '.js')]
-      return '' if asset.nil?
-
-      opal_extnames = sprockets.engines.map do |ext, engine|
-        ext if engine <= ::Opal::Processor
-      end.compact
-
-      module_name = -> asset { asset.logical_path.sub(/\.js#{REGEXP_END}/, '') }
-      path_extnames = -> path { File.basename(path).scan(/\.[^.]+/) }
-      mark_as_loaded = -> path { "Opal.mark_as_loaded(#{path.inspect});" }
-      processed_by_opal = -> asset { (path_extnames[asset.pathname] & opal_extnames).any? }
-
-      non_opal_assets = ([asset]+asset.dependencies)
-        .select { |asset| not(processed_by_opal[asset]) }
-        .map { |asset| module_name[asset] }
-
-      mark_as_loaded = (['opal'] + non_opal_assets + stubbed_files.to_a)
-        .map { |path| mark_as_loaded[path] }
-
-      if processed_by_opal[asset]
-        load_asset_code = "Opal.load(#{module_name[asset].inspect});"
-      end
-
-      <<-JS
-      if (typeof(Opal) !== 'undefined') {
-        #{mark_as_loaded.join("\n")}
-        #{load_asset_code}
-      }
-      JS
-    end
-
+    # @deprecated
     def self.stubbed_files
-      @stubbed_files ||= Set.new
+      warn "Deprecated: `::Opal::Processor.stubbed_files' is deprecated, use `::Opal::Config.stubbed_files' instead"
+      puts caller(5)
+      ::Opal::Config.stubbed_files
     end
 
+    # @deprecated
     def self.stub_file(name)
-      stubbed_files << name.to_s
+      warn "Deprecated: `::Opal::Processor.stub_file' is deprecated, use `::Opal::Config.stubbed_files << #{name.inspect}.to_s' instead"
+      puts caller(5)
+      ::Opal::Config.stubbed_files << name.to_s
     end
+
+
+    private
 
     def stubbed_files
-      self.class.stubbed_files
+      ::Opal::Config.stubbed_files
     end
   end
 end

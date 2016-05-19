@@ -1,10 +1,4 @@
-require 'rack/file'
-require 'rack/static'
-require 'rack/urlmap'
-require 'rack/builder'
-require 'rack/deflater'
-require 'rack/directory'
-require 'rack/showexceptions'
+require 'rack'
 require 'opal/source_map'
 require 'sprockets'
 require 'sourcemap'
@@ -19,15 +13,7 @@ module Opal
     attr_accessor :debug, :use_index, :index_path, :main, :public_root,
                   :public_urls, :sprockets, :prefix
 
-    def initialize debug_or_options = {}
-      unless Hash === debug_or_options
-        warn "passing a boolean to control debug is deprecated.\n"+
-             "Please pass an Hash instead: Server.new(debug: true)"
-        options = {:debug => debug_or_options}
-      else
-        options = debug_or_options
-      end
-
+    def initialize options = {}
       @use_index   = true
       @public_root = nil
       @public_urls = ['/']
@@ -47,11 +33,11 @@ module Opal
     end
 
     def source_map=(enabled)
-      Opal::Processor.source_map_enabled = enabled
+      Opal::Config.source_map_enabled = enabled
     end
 
     def source_map_enabled
-      Opal::Processor.source_map_enabled
+      Opal::Config.source_map_enabled
     end
 
     def append_path path
@@ -79,8 +65,6 @@ module Opal
         use Index, server if server.use_index
         if source_map_enabled
           map(maps_prefix) do
-            require 'rack/conditionalget'
-            require 'rack/etag'
             use Rack::ConditionalGet
             use Rack::ETag
             run maps_app
@@ -117,6 +101,7 @@ module Opal
           raise "index does not exist: #{@index_path}" unless File.exist?(@index_path)
           Tilt.new(@index_path).render(self)
         else
+          raise "Main asset path not configured (set 'main' within Opal::Server.new block)" if @server.main.nil?
           source
         end
       end
@@ -124,21 +109,9 @@ module Opal
       def javascript_include_tag name
         sprockets = @server.sprockets
         prefix = @server.prefix
-        asset = sprockets[name]
-        raise "Cannot find asset: #{name}" if asset.nil?
-        scripts = []
+        debug = @server.debug
 
-        if @server.debug
-          asset.to_a.map do |dependency|
-            scripts << %{<script src="#{prefix}/#{dependency.logical_path}?body=1"></script>}
-          end
-        else
-          scripts << %{<script src="#{prefix}/#{name}.js"></script>}
-        end
-
-        scripts << %{<script>#{Opal::Processor.load_asset_code(sprockets, name)}</script>}
-
-        scripts.join "\n"
+        ::Opal::Sprockets.javascript_include_tag(name, sprockets: sprockets, prefix: prefix, debug: debug)
       end
 
       def source
@@ -146,6 +119,7 @@ module Opal
           <!DOCTYPE html>
           <html>
           <head>
+            <meta charset="utf-8">
             <title>Opal Server</title>
           </head>
           <body>

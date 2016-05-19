@@ -23,6 +23,10 @@ describe "Method calls" do
     parsed("foo\n.bar").should == [:call, [:call, nil, :foo, [:arglist]], :bar, [:arglist]]
     lambda { parsed("foo\n..bar") }.should raise_error(Exception)
   end
+
+  it "parses method starting on the next line after \\" do
+    parsed("\\\nfoo").should == [:call, nil, :foo, [:arglist]]
+  end
 end
 
 describe "Operator calls" do
@@ -154,6 +158,24 @@ describe 'Operator calls followed by parens' do
   end
 end
 
+describe 'Calls that include a hash' do
+  it 'parses correctly when a hash followed by a block' do
+    parsed('foo(a => 2, &block)').should == [:call, nil, :foo, [:arglist, [:hash, [:call, nil, :a, [:arglist]], [:int, 2]],[:block_pass, [:call, nil, :block, [:arglist]]]]]
+  end
+  
+  it 'parses correctly when only a hash is passed' do
+    parsed('foo(a => 2)').should == [:call, nil, :foo, [:arglist, [:hash, [:call, nil, :a, [:arglist]], [:int, 2]]]]
+  end
+  
+  it 'parses correctly when ending in hash' do
+    parsed('foo(1, a => 2)').should == [:call, nil, :foo, [:arglist, [:int, 1], [:hash, [:call, nil, :a, [:arglist]], [:int, 2]]]]
+  end
+  
+  it 'parses correctly with another parameter and hash followed by a block' do
+    parsed('foo(1, a => 2, &block)').should == [:call, nil, :foo, [:arglist, [:int, 1], [:hash, [:call, nil, :a, [:arglist]], [:int, 2]], [:block_pass, [:call, nil, :block, [:arglist]]]]]
+  end
+end
+
 describe 'Calls with trailing comma' do
   it 'parses correctly' do
     parsed('foo(1,)').should == [:call, nil, :foo, [:arglist, [:int, 1]]]
@@ -161,5 +183,19 @@ describe 'Calls with trailing comma' do
 
     parsed('foo(a: 100,)').should == [:call, nil, :foo, [:arglist,
       [:hash, [:sym, :a], [:int, 100]]]]
+  end
+end
+
+describe 'Calls with kwsplat' do
+  it 'parses empty kwsplat' do
+    parsed('foo(**{})').should == [:call, nil, :foo, [:arglist, [:hash, [:kwsplat, [:hash]]]]]
+  end
+
+  it 'parses non-empty kwsplat' do
+    parsed('foo(**{ a: 1 })').should == [:call, nil, :foo, [:arglist, [:hash, [:kwsplat, [:hash, [:sym, :a], [:int, 1]]]]]]
+  end
+
+  it 'supports kwargs and kwsplat' do
+    parsed('foo(a: 1, **{ b: 2 })').should == [:call, nil, :foo, [:arglist, [:hash, [:sym, :a], [:int, 1], [:kwsplat, [:hash, [:sym, :b], [:int, 2]]]]]]
   end
 end

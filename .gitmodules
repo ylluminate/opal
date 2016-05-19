@@ -1,7 +1,10 @@
 [submodule "spec/rubyspec"]
-	path = spec/rubyspec
-	url = https://github.com/ruby/rubyspec.git
+	path = spec/ruby
+	url = https://github.com/ruby/spec.git
 [submodule "test/cruby"]
 	path = test/cruby
 	url = https://github.com/ruby/ruby.git
 	branch = ruby_2_2
+[submodule "spec/mspec"]
+	path = spec/mspec
+	url = https://github.com/ruby/mspec.git

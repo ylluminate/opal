@@ -40,8 +40,18 @@ module Opal
 
       def compile_iter
         error "break must be used as a statement" unless stmt?
-        push expr_or_nil(value)
-        wrap "return ($breaker.$v = ", ", $breaker)"
+        compiler.has_break!
+        line 'Opal.brk(', break_val, ', $brk)'
+      end
+
+      def break_val
+        if value.nil?
+          expr(s(:nil))
+        elsif children.size > 1
+          expr(s(:array, *children))
+        else
+          expr(value)
+        end
       end
     end
 
@@ -76,7 +86,7 @@ module Opal
       def compile
         with_temp do |tmp|
           push expr(value)
-          wrap "(#{tmp} = ", ", (#{tmp} === nil || #{tmp} === false))"
+          wrap "(#{tmp} = ", ", (#{tmp} === nil || #{tmp} === false || #{tmp} == null))"
         end
       end
     end
@@ -96,33 +106,65 @@ module Opal
         elsif value.type == :sym
           push '[', expr(value), ']'
         else
-          push recv(value)
+          push "Opal.to_a(", recv(value), ")"
         end
       end
     end
 
-    class OrNode < Base
+    class BinaryOp < Base
+      def compile
+        if rhs.type == :break
+          compile_if
+        else
+          compile_ternary
+        end
+      end
+
+      def compile_ternary
+        raise NotImplementedError
+      end
+
+      def compile_if
+        raise NotImplementedError
+      end
+    end
+
+    class OrNode < BinaryOp
       handle :or
 
       children :lhs, :rhs
 
-      def compile
+      def compile_ternary
         with_temp do |tmp|
           push "(((#{tmp} = "
           push expr(lhs)
-          push ") !== false && #{tmp} !== nil) ? #{tmp} : "
+          push ") !== false && #{tmp} !== nil && #{tmp} != null) ? #{tmp} : "
           push expr(rhs)
           push ")"
         end
       end
+
+      def compile_if
+        with_temp do |tmp|
+          push "if (#{tmp} = ", expr(lhs), ", #{tmp} !== false && #{tmp} !== nil && #{tmp} != null) {"
+          indent do
+            line tmp
+          end
+          line "} else {"
+            indent do
+              line expr(rhs)
+            end
+          line "}"
+        end
+      end
     end
 
-    class AndNode < Base
+    class AndNode < BinaryOp
       handle :and
 
       children :lhs, :rhs
 
-      def compile
+      def compile_ternary
         truthy_opt = nil
 
         with_temp do |tmp|
@@ -130,14 +172,32 @@ module Opal
             push "((#{tmp} = ", truthy_opt
             push ") ? "
             push expr(rhs)
-            push " : #{tmp})"
+            push " : ", expr(lhs), ")"
           else
             push "(#{tmp} = "
             push expr(lhs)
-            push ", #{tmp} !== false && #{tmp} !== nil ?"
+            push ", #{tmp} !== false && #{tmp} !== nil && #{tmp} != null ?"
             push expr(rhs)
             push " : #{tmp})"
           end
+        end
+      end
+
+      def compile_if
+        with_temp do |tmp|
+          if truthy_opt = js_truthy_optimize(lhs)
+            push "if (#{tmp} = ", truthy_opt, ") {"
+          else
+            push "if (#{tmp} = ", expr(lhs), ", #{tmp} !== false && #{tmp} !== nil && #{tmp} != null) {"
+          end
+          indent do
+            line expr(rhs)
+          end
+          line "} else {"
+          indent do
+            line expr(lhs)
+          end
+          line "}"
         end
       end
     end

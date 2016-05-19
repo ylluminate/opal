@@ -84,7 +84,7 @@ module Opal
         options[:compile] = true
       end
 
-      on('-R', '--runner RUNNER', %w[nodejs server phantomjs applescript], 'Choose the runner: nodejs (default), server') do |runner|
+      on('-R', '--runner RUNNER', %w[nodejs server phantomjs applescript nashorn], 'Choose the runner: nodejs (default), server') do |runner|
         options[:runner] = runner.to_sym
       end
 
@@ -93,10 +93,13 @@ module Opal
         options[:port] = port.to_i
       end
 
-      on('--no-exit', 'Do not append a Kernel#exit at the end of file') do |no_exit|
+      on('-E', '--no-exit', 'Do not append a Kernel#exit at the end of file') do |no_exit|
         options[:no_exit] = true
       end
 
+      on('-L', '--library', 'Generate only the code of the library. Omit [programfile] and [-e]') do |no_exit|
+        options[:lib_only] = true
+      end
 
       section 'Compilation Options:'
 

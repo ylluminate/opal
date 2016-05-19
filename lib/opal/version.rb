@@ -1,5 +1,5 @@
 module Opal
   # WHEN RELEASING:
-  # Remember to update RUBY_ENGINE_VERSION in opal/corelib/variables.rb too!
-  VERSION = '0.8.0.rc1'
+  # Remember to update RUBY_ENGINE_VERSION in opal/corelib/constants.rb too!
+  VERSION = '0.10.0.beta3'
 end

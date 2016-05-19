@@ -7,7 +7,7 @@ module Opal
   class CLI
     attr_reader :options, :file, :compiler_options, :evals, :load_paths, :argv,
                 :output, :requires, :gems, :stubs, :verbose, :port, :preload,
-                :filename, :debug, :no_exit
+                :filename, :debug, :no_exit, :lib_only
 
     def compile?
       @compile
@@ -32,22 +32,23 @@ module Opal
       @runner_type = options.delete(:runner)    || :nodejs
       @port       = options.delete(:port)       || 3000
 
-      @options    = options
-      @compile    = !!options.delete(:compile)
-      @sexp       = options.delete(:sexp)
-      @file       = options.delete(:file)
-      @no_exit    = options.delete(:no_exit)
-      @argv       = options.delete(:argv)       || []
-      @evals      = options.delete(:evals)      || []
-      @requires   = options.delete(:requires)   || []
-      @load_paths = options.delete(:load_paths) || []
-      @gems       = options.delete(:gems)       || []
-      @stubs      = options.delete(:stubs)      || []
-      @preload    = options.delete(:preload)    || []
-      @output     = options.delete(:output)     || self.class.stdout || $stdout
-      @verbose    = options.fetch(:verbose, false); options.delete(:verbose)
-      @debug      = options.fetch(:debug, false);   options.delete(:debug)
-      @filename   = options.fetch(:filename) { @file && @file.path }; options.delete(:filename)
+      @options     = options
+      @compile     = !!options.delete(:compile)
+      @sexp        = options.delete(:sexp)
+      @file        = options.delete(:file)
+      @no_exit     = options.delete(:no_exit)
+      @lib_only    = options.delete(:lib_only)
+      @argv        = options.delete(:argv)       || []
+      @evals       = options.delete(:evals)      || []
+      @requires    = options.delete(:requires)   || []
+      @load_paths  = options.delete(:load_paths) || []
+      @gems        = options.delete(:gems)       || []
+      @stubs       = options.delete(:stubs)      || []
+      @preload     = options.delete(:preload)    || []
+      @output      = options.delete(:output)     || self.class.stdout || $stdout
+      @verbose     = options.fetch(:verbose, false); options.delete(:verbose)
+      @debug       = options.fetch(:debug, false);   options.delete(:debug)
+      @filename    = options.fetch(:filename) { @file && @file.path }; options.delete(:filename)
       @skip_opal_require = options.delete(:skip_opal_require)
       @compiler_options = Hash[
         *compiler_option_names.map do |option|
@@ -58,7 +59,8 @@ module Opal
         end.compact.flatten
       ]
 
-      raise ArgumentError, "no runnable code provided (evals or file)" if @evals.empty? and @file.nil?
+      raise ArgumentError, "no runnable code provided (evals or file)" if @evals.empty? and @file.nil? and not(@lib_only)
+      raise ArgumentError, "can't accept evals or file in `library only` mode" if (@evals.any? or @file) and @lib_only
       raise ArgumentError, "unknown options: #{options.inspect}" unless @options.empty?
     end
 
@@ -71,13 +73,12 @@ module Opal
     end
 
     def runner
-      @runner ||= case @runner_type
-                  when :server;      CliRunners::Server.new(output, port)
-                  when :nodejs;      CliRunners::Nodejs.new(output)
-                  when :phantomjs;   CliRunners::Phantomjs.new(output)
-                  when :applescript; CliRunners::AppleScript.new(output)
-                  else raise ArgumentError, @runner_type.inspect
-                  end
+      @runner ||= begin
+        const_name = @runner_type.to_s.capitalize
+        CliRunners.const_defined?(const_name) or
+          raise ArgumentError, "unknown runner: #{@runner_type.inspect}"
+        CliRunners.const_get(const_name).new(output: output, port: port)
+      end
     end
 
     def run_code
@@ -105,11 +106,9 @@ module Opal
         builder.build(local_require)
       end
 
-      if evals.any?
-        builder.build_str(evals.join("\n"), '-e')
-      else
-        if file and (filename != '-' or evals.empty?)
-          builder.build_str(file.read, filename)
+      unless lib_only
+        evals_or_file do |contents, filename|
+          builder.build_str(contents, filename)
         end
       end
 
@@ -127,14 +126,10 @@ module Opal
     end
 
     def show_sexp
-      if evals.any?
-        sexp = Opal::Parser.new.parse(evals.join("\n"), '-e')
-      else
-        if file and (file.path != '-' or evals.empty?)
-          sexp = Opal::Parser.new.parse(file.read, file.path)
-        end
+      evals_or_file do |contents, filename|
+        sexp = Opal::Parser.new.parse(contents, filename)
+        puts sexp.inspect
       end
-      puts sexp.inspect
     end
 
     def map
@@ -152,6 +147,18 @@ module Opal
         irb_enabled
         inline_operators
       ]
+    end
+
+    # Internal: Yelds a string of source code and the proper filename for either
+    #           evals, stdin or a filepath.
+    def evals_or_file
+      if evals.any?
+        yield evals.join("\n"), '-e'
+      else
+        if file and (filename != '-' or evals.empty?)
+          yield file.read, filename
+        end
+      end
     end
 
     def puts(*args)

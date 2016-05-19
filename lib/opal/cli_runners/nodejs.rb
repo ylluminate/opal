@@ -4,8 +4,10 @@ require 'opal/paths'
 module Opal
   module CliRunners
     class Nodejs
-      def initialize(output)
-        @output ||= output
+      NODE_PATH = File.expand_path('../stdlib/nodejs/node_modules', ::Opal.gem_dir)
+
+      def initialize(options)
+        @output = options.fetch(:output, $stdout)
       end
       attr_reader :output, :exit_status
 
@@ -14,7 +16,7 @@ module Opal
       end
 
       def node_modules
-        File.expand_path('../stdlib/nodejs/node_modules', ::Opal.gem_dir)
+        NODE_PATH
       end
 
       def run(code, argv)

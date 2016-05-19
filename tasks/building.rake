@@ -14,9 +14,9 @@ task :dist do
   require 'opal/util'
   require 'opal/sprockets/environment'
 
-  Opal::Processor.arity_check_enabled = false
-  Opal::Processor.const_missing_enabled = false
-  Opal::Processor.dynamic_require_severity = :warning
+  Opal::Config.arity_check_enabled = false
+  Opal::Config.const_missing_enabled = false
+  Opal::Config.dynamic_require_severity = :warning
   env = Opal::Environment.new
 
   build_dir = ENV['DIR'] || 'build'
@@ -48,7 +48,8 @@ end
 
 desc 'Rebuild grammar.rb for opal parser'
 task :racc do
-  %x(racc -l lib/opal/parser/grammar.y -o lib/opal/parser/grammar.rb)
+  debug_option = '--debug' if ENV['RACC_DEBUG']
+  sh "racc #{debug_option} -l -o lib/opal/parser/grammar.rb lib/opal/parser/grammar.y"
 end
 
 desc 'Remove any generated file.'

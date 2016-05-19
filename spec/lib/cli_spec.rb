@@ -5,7 +5,7 @@ require 'stringio'
 describe Opal::CLI do
   let(:fake_stdout) { StringIO.new }
   let(:file)    { File.expand_path('../fixtures/opal_file.rb', __FILE__) }
-  let(:options) { nil }
+  let(:options) { {} }
   subject(:cli) { described_class.new(options) }
 
   context 'with a file' do
@@ -14,12 +14,28 @@ describe Opal::CLI do
     it 'runs the file' do
       expect_output_of{ subject.run }.to eq("hi from opal!\n")
     end
+
+    context 'with lib_only: true' do
+      let(:options) { super().merge lib_only: true }
+
+      it 'raises ArgumentError' do
+        expect{subject.run}.to raise_error(ArgumentError)
+      end
+    end
   end
 
   describe ':evals option' do
     context 'without evals and paths' do
       it 'raises ArgumentError' do
         expect { subject.run }.to raise_error(ArgumentError)
+      end
+
+      context 'with lib_only: true' do
+        let(:options) { super().merge lib_only: true }
+
+        it 'does not raise an error' do
+          expect{subject.run}.not_to raise_error
+        end
       end
     end
 
@@ -28,6 +44,14 @@ describe Opal::CLI do
 
       it 'executes the code' do
         expect_output_of{ subject.run }.to eq("hello\n")
+      end
+
+      context 'with lib_only: true' do
+        let(:options) { super().merge lib_only: true }
+
+        it 'raises ArgumentError' do
+          expect{subject.run}.to raise_error(ArgumentError)
+        end
       end
     end
 
@@ -52,6 +76,23 @@ describe Opal::CLI do
       let(:options) { {no_exit: true, compile: true, evals: ['']} }
       it 'appends a Kernel#exit at the end of the source' do
         expect_output_of{ subject.run }.not_to include(".$exit();")
+      end
+    end
+  end
+
+  describe ':lib_only option' do
+    context 'when false' do
+      let(:options) { {lib_only: false, compile: true, evals: [''], skip_opal_require: true, no_exit: true} }
+      it 'appends an empty code block at the end of the source' do
+        expect_output_of{ subject.run }.to include("function(Opal)")
+      end
+    end
+
+    context 'when true' do
+      let(:options) { {lib_only: true, compile: true, skip_opal_require: true, no_exit: true} }
+
+      it 'does not append code block at the end of the source' do
+        expect_output_of{ subject.run }.to eq("\n")
       end
     end
   end
@@ -115,14 +156,13 @@ describe Opal::CLI do
   end
 
   describe ':compile option' do
-    let(:options)  { {:compile => true, :evals => ['puts 5']} }
+    let(:options)  { {:compile => true, :evals => ['puts 2342']} }
 
     it 'outputs the compiled javascript' do
-      expect_output_of{ subject.run }.to include(".$puts(5)")
-      expect_output_of{ subject.run }.not_to include("5\n")
+      expect_output_of{ subject.run }.to include(".$puts(2342)")
+      expect_output_of{ subject.run }.not_to include("2342\n")
     end
   end
-
 
   describe ':load_paths options' do
     let(:dir)      { File.dirname(file) }
@@ -132,6 +172,17 @@ describe Opal::CLI do
       expect_output_of{ subject.run }.to eq("hi from opal!\n")
     end
   end
+
+  describe ':sexp option' do
+    let(:options) { {evals: ['puts 4'], sexp: true} }
+    it 'prints syntax expressions for the given code' do
+      expect_output_of{ subject.run }.to eq("(:call, nil, :puts, (:arglist, (:int, 4)))\n")
+    end
+  end
+
+
+
+  private
 
   def expect_output_of
     @output, _result = output_and_result_of { yield }

@@ -1,3 +1,17 @@
+# Provides a complete set of tools to wrap native JavaScript
+# into nice Ruby objects.
+#
+# @example
+#
+#   $$.document.querySelector('p').classList.add('blue')
+#   # => adds "blue" class to <p>
+#
+#   $$.location.href = 'https://google.com'
+#   # => changes page location
+#
+#   do_later = $$[:setTimeout] # Accessing the "setTimeout" property
+#   do_later.call(->{ puts :hello}, 500)
+#
 module Native
   def self.is_a?(object, klass)
     %x{
@@ -10,7 +24,7 @@ module Native
     }
   end
 
-  def self.try_convert(value)
+  def self.try_convert(value, default=nil)
     %x{
       if (#{native?(value)}) {
         return #{value};
@@ -19,7 +33,7 @@ module Native
         return #{value.to_n};
       }
       else {
-        return nil;
+        return #{default};
       }
     }
   end
@@ -45,7 +59,7 @@ module Native
       if (prop instanceof Function) {
         var converted = new Array(args.length);
 
-        for (var i = 0, length = args.length; i < length; i++) {
+        for (var i = 0, l = args.length; i < l; i++) {
           var item = args[i],
               conv = #{try_convert(`item`)};
 
@@ -64,8 +78,69 @@ module Native
     }
   end
 
+  def self.proc(&block)
+    raise LocalJumpError, "no block given" unless block
+
+    Kernel.proc {|*args|
+      args.map! { |arg| Native(arg) }
+      instance = Native(`this`)
+
+      %x{
+        // if global is current scope, run the block in the scope it was defined
+        if (this === Opal.global) {
+          return block.apply(self, #{args});
+        }
+
+        var self_ = block.$$s;
+        block.$$s = null;
+
+        try {
+          return block.apply(#{instance}, #{args});
+        }
+        finally {
+          block.$$s = self_;
+        }
+      }
+    }
+  end
+
   module Helpers
-    def alias_native(new, old = new, options = {})
+    # Exposes a native JavaScript method to Ruby
+    #
+    #
+    # @param new [String]
+    #       The name of the newly created method.
+    #
+    # @param old [String]
+    #       The name of the native JavaScript method to be exposed.
+    #       If the name ends with "=" (e.g. `foo=`) it will be interpreted as
+    #       a property setter. (default: the value of "new")
+    #
+    # @param as [Class]
+    #       If provided the values returned by the original method will be
+    #       returned as instances of the passed class. The class passed to "as"
+    #       is expected to accept a native JavaScript value.
+    #
+    # @example
+    #
+    #   class Element
+    #     include Native::Helpers
+    #
+    #     alias_native :add_class, :addClass
+    #     alias_native :show
+    #     alias_native :hide
+    #
+    #     def initialize(selector)
+    #       @native = `$(#{selector})`
+    #     end
+    #   end
+    #
+    #   titles = Element.new('h1')
+    #   titles.add_class :foo
+    #   titles.hide
+    #   titles.show
+    #
+    def alias_native(new, old = new, as: nil)
       if old.end_with? ?=
         define_method new do |value|
           `#@native[#{old[0 .. -2]}] = #{Native.convert(value)}`
@@ -73,7 +148,7 @@ module Native
           value
         end
       else
-        if as = options[:as]
+        if as
           define_method new do |*args, &block|
             if value = Native.call(@native, old, *args, &block)
               as.new(value.to_n)
@@ -121,6 +196,7 @@ module Native
     @native = native
   end
 
+  # Returns the internal native JavaScript value
   def to_n
     @native
   end
@@ -131,11 +207,24 @@ module Kernel
     `value == null || !value.$$class`
   end
 
+  # Wraps a native JavaScript with `Native::Object.new`
+  #
+  # @return [Native::Object] The wrapped object if it is native
+  # @return [nil] for `null` and `undefined`
+  # @return [obj] The object itself if it's not native
   def Native(obj)
     if `#{obj} == null`
       nil
     elsif native?(obj)
       Native::Object.new(obj)
+    elsif obj.is_a?(Array)
+      obj.map do |o|
+        Native(o)
+      end
+    elsif obj.is_a?(Proc)
+      proc do |*args, &block|
+        Native(obj.call(*args, &block))
+      end
     else
       obj
     end
@@ -143,6 +232,7 @@ module Kernel
 
   alias_method :_Array, :Array
 
+  # Wraps array-like JavaScript objects in Native::Array
   def Array(object, *args, &block)
     if native?(object)
       return Native::Array.new(object, *args, &block).to_a
@@ -219,7 +309,7 @@ class Native::Object < BasicObject
     Kernel.instance_method(:respond_to?).bind(self).call(name, include_all)
   end
 
-  def respond_to_missing?(name)
+  def respond_to_missing?(name, include_all = false)
     `Opal.hasOwnProperty.call(#@native, #{name})`
   end
 
@@ -284,11 +374,7 @@ class Native::Array
 
     %x{
       for (var i = 0, length = #{length}; i < length; i++) {
-        var value = Opal.yield1(block, #{self[`i`]});
-
-        if (value === $breaker) {
-          return $breaker.$v;
-        }
+        Opal.yield1(block, #{self[`i`]});
       }
     }
 
@@ -349,55 +435,48 @@ class Native::Array
 end
 
 class Numeric
+  # @return the internal JavaScript value (with `valueOf`).
   def to_n
     `self.valueOf()`
   end
 end
 
 class Proc
+  # @return itself (an instance of `Function`)
   def to_n
     self
   end
 end
 
 class String
+  # @return the internal JavaScript value (with `valueOf`).
   def to_n
     `self.valueOf()`
   end
 end
 
 class Regexp
+  # @return the internal JavaScript value (with `valueOf`).
   def to_n
     `self.valueOf()`
   end
 end
 
 class MatchData
+  # @return the array of matches
   def to_n
     @matches
   end
 end
 
 class Struct
-  def initialize(*args)
-    if args.length == 1 && native?(args[0])
-      object = args[0]
-
-      members.each {|name|
-        instance_variable_set "@#{name}", Native(`#{object}[#{name}]`)
-      }
-    else
-      members.each_with_index {|name, index|
-        instance_variable_set "@#{name}", args[index]
-      }
-    end
-  end
-
+  # @return a JavaScript object with the members as keys and their
+  # values as values.
   def to_n
     result = `{}`
 
     each_pair {|name, value|
-      `#{result}[#{name}] = #{value.to_n}`
+      `#{result}[#{name}] = #{Native.try_convert(value, value)}`
     }
 
     result
@@ -405,6 +484,7 @@ class Struct
 end
 
 class Array
+  # Retuns a copy of itself trying to call #to_n on each member.
   def to_n
     %x{
       var result = [];
@@ -412,12 +492,7 @@ class Array
       for (var i = 0, length = self.length; i < length; i++) {
         var obj = self[i];
 
-        if (#{`obj`.respond_to? :to_n}) {
-          result.push(#{`obj`.to_n});
-        }
-        else {
-          result.push(obj);
-        }
+        result.push(#{Native.try_convert(`obj`, `obj`)});
       }
 
       return result;
@@ -426,93 +501,84 @@ class Array
 end
 
 class Boolean
+  # @return the internal JavaScript value (with `valueOf`).
   def to_n
     `self.valueOf()`
   end
 end
 
 class Time
+  # @return itself (an instance of `Date`).
   def to_n
     self
   end
 end
 
 class NilClass
+  # @return the corresponding JavaScript value (`null`).
   def to_n
     `null`
   end
 end
 
 class Hash
+  alias_method :_initialize, :initialize
+
   def initialize(defaults = undefined, &block)
     %x{
-      if (defaults != null) {
-        if (defaults.constructor === Object) {
-          var _map = self.map,
-              smap = self.smap,
-              keys = self.keys,
-              map, khash, value;
+      if (defaults !== undefined && defaults.constructor === Object) {
+        var smap = self.$$smap,
+            keys = self.$$keys,
+            key, value;
 
-          for (var key in defaults) {
-            value = defaults[key];
+        for (key in defaults) {
+          value = defaults[key];
 
-            if (key.$$is_string) {
-              map = smap;
-              khash = key;
-            } else {
-              map = _map;
-              khash = key.$hash();
-            }
+          if (value && value.constructor === Object) {
+            smap[key] = #{Hash.new(`value`)};
+          } else if (value && value.$$is_array) {
+            value = value.map(function(item) {
+              if (item && item.constructor === Object) {
+                return #{Hash.new(`item`)};
+              }
 
-            if (value && value.constructor === Object) {
-              map[khash] = #{Hash.new(`value`)};
-            }
-            else {
-              map[khash] = #{Native(`value`)};
-            }
-
-            keys.push(key);
+              return item;
+            });
+            smap[key] = value
+          } else {
+            smap[key] = #{Native(`value`)};
           }
+
+          keys.push(key);
         }
-        else {
-          self.none = defaults;
-        }
-      }
-      else if (block !== nil) {
-        self.proc = block;
+
+        return self;
       }
 
-      return self;
+      return #{_initialize(defaults, &block)};
     }
   end
 
+  # @return a JavaScript object with the same keys but calling #to_n on
+  # all values.
   def to_n
     %x{
       var result = {},
-          keys   = self.keys,
-          _map   = self.map,
-          smap   = self.smap,
-          map, khash, value, key;
+          keys = self.$$keys,
+          smap = self.$$smap,
+          key, value;
 
       for (var i = 0, length = keys.length; i < length; i++) {
-        key   = keys[i];
+        key = keys[i];
 
         if (key.$$is_string) {
-          map = smap;
-          khash = key;
+          value = smap[key];
         } else {
-          map = _map;
-          khash = key.$hash();
+          key = key.key;
+          value = key.value;
         }
 
-        value = map[khash];
-
-        if (#{`value`.respond_to? :to_n}) {
-          result[key] = #{`value`.to_n};
-        }
-        else {
-          result[key] = value;
-        }
+        result[key] = #{Native.try_convert(`value`, `value`)};
       }
 
       return result;
@@ -521,6 +587,8 @@ class Hash
 end
 
 class Module
+  # Exposes the current module as a property of
+  # the global object (e.g. `window`).
   def native_module
     `Opal.global[#{self.name}] = #{self}`
   end
@@ -531,7 +599,7 @@ class Class
     %x{
       var aliased = #{self}.$$proto['$' + #{existing_mid}];
       if (!aliased) {
-        #{raise NameError, "undefined method `#{existing_mid}' for class `#{inspect}'"};
+        #{raise NameError.new("undefined method `#{existing_mid}' for class `#{inspect}'", exiting_mid)};
       }
       #{self}.$$proto[#{new_jsid}] = aliased;
     }
@@ -543,5 +611,5 @@ class Class
   end
 end
 
-# native global
+# Exposes the global value (would be `window` inside a browser)
 $$ = $global = Native(`Opal.global`)

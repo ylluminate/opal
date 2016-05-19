@@ -1,26 +1,16 @@
 class Module
-  def self.new(&block)
+  def self.allocate
     %x{
-      function AnonModule(){}
-      var klass      = Opal.boot(Opal.Module, AnonModule);
-      klass.$$name   = nil;
-      klass.$$class  = Opal.Module;
-      klass.$$dep    = []
-      klass.$$is_mod = true;
-      klass.$$proto  = {};
+      var module;
 
-      // inherit scope from parent
-      Opal.create_scope(Opal.Module.$$scope, klass);
-
-      if (block !== nil) {
-        var block_self = block.$$s;
-        block.$$s = null;
-        block.call(klass);
-        block.$$s = block_self;
-      }
-
-      return klass;
+      module = Opal.module_allocate();
+      Opal.create_scope(Opal.Module.$$scope, module, null);
+      return module;
     }
+  end
+
+  def initialize(&block)
+    `Opal.module_initialize(self, block)`
   end
 
   def ===(object)
@@ -30,56 +20,82 @@ class Module
   end
 
   def <(other)
+    unless Module === other
+      raise TypeError, "compared with non class/module"
+    end
+
+    # class cannot be a descendant of itself
     %x{
-      var working = self;
+      var working = self,
+          ancestors,
+          i, length;
 
-      while (working) {
-        if (working === other) {
-          return true;
-        }
-
-        working = working.$$parent;
+      if (working === other) {
+        return false;
       }
 
-      return false;
+      for (i = 0, ancestors = Opal.ancestors(self), length = ancestors.length; i < length; i++) {
+        if (ancestors[i] === other) {
+          return true;
+        }
+      }
+
+      for (i = 0, ancestors = Opal.ancestors(other), length = ancestors.length; i < length; i++) {
+        if (ancestors[i] === self) {
+          return false;
+        }
+      }
+
+      return nil;
     }
   end
 
-  def alias_method(newname, oldname)
+  def <=(other)
+    equal?(other) || self < other
+  end
+
+  def >(other)
+    unless Module === other
+      raise TypeError, "compared with non class/module"
+    end
+
+    other < self
+  end
+
+  def >=(other)
+    equal?(other) || self > other
+  end
+
+  def <=>(other)
     %x{
-      var newjsid = '$' + newname,
-          body    = self.$$proto['$' + oldname];
-
-      if (self.$$is_singleton) {
-        self.$$proto[newjsid] = body;
+      if (self === other) {
+        return 0;
       }
-      else {
-        Opal.defn(self, newjsid, body);
-      }
-
-      return self;
     }
+
+    unless Module === other
+      return nil
+    end
+
+    lt = self < other
+    return nil if lt.nil?
+    lt ? -1 : 1
+  end
+
+  def alias_method(newname, oldname)
+    `Opal.alias(self, newname, oldname)`
+
     self
   end
 
   def alias_native(mid, jsid = mid)
-    `self.$$proto['$' + mid] = self.$$proto[jsid]`
+    `Opal.alias_native(self, mid, jsid)`
+
+    self
   end
 
   def ancestors
-    %x{
-      var parent = self,
-          result = [];
-
-      while (parent) {
-        result.push(parent);
-        result = result.concat(parent.$$inc);
-
-        parent = parent.$$super;
-      }
-
-      return result;
-    }
+    `Opal.ancestors(self)`
   end
 
   def append_features(klass)
@@ -100,18 +116,27 @@ class Module
 
       for (var i = names.length - 1; i >= 0; i--) {
         var name = names[i],
-            id   = '$' + name;
+            id   = '$' + name,
+            ivar = Opal.ivar(name);
 
         // the closure here is needed because name will change at the next
         // cycle, I wish we could use let.
-        var body = (function(name) {
+        var body = (function(ivar) {
           return function() {
-            return this[name];
+            if (this[ivar] == null) {
+              return nil;
+            }
+            else {
+              return this[ivar];
+            }
           };
-        })(name);
+        })(ivar);
 
         // initialize the instance variable as nil
-        proto[name] = nil;
+        proto[ivar] = nil;
+
+        body.$$parameters = [];
+        body.$$arity = 0;
 
         if (self.$$is_singleton) {
           proto.constructor.prototype[id] = body;
@@ -131,18 +156,22 @@ class Module
 
       for (var i = names.length - 1; i >= 0; i--) {
         var name = names[i],
-            id   = '$' + name + '=';
+            id   = '$' + name + '=',
+            ivar = Opal.ivar(name);
 
         // the closure here is needed because name will change at the next
         // cycle, I wish we could use let.
-        var body = (function(name){
+        var body = (function(ivar){
           return function(value) {
-            return this[name] = value;
+            return this[ivar] = value;
           }
-        })(name);
+        })(ivar);
+
+        body.$$parameters = [['req']];
+        body.$$arity = 1;
 
         // initialize the instance variable as nil
-        proto[name] = nil;
+        proto[ivar] = nil;
 
         if (self.$$is_singleton) {
           proto.constructor.prototype[id] = body;
@@ -171,10 +200,10 @@ class Module
 
   def class_variable_get(name)
     name = Opal.coerce_to!(name, String, :to_str)
-    raise NameError, 'class vars should start with @@' if `name.length < 3 || name.slice(0,2) !== '@@'`
+    raise NameError.new('class vars should start with @@', name) if `name.length < 3 || name.slice(0,2) !== '@@'`
     %x{
       var value = Opal.cvars[name.slice(2)];
-      #{raise NameError, 'uninitialized class variable @@a in' if `value == null`}
+      #{raise NameError.new('uninitialized class variable @@a in', name) if `value == null`}
       return value;
     }
   end
@@ -189,13 +218,15 @@ class Module
   end
 
   def constants
-    `self.$$scope.constants`
+    `self.$$scope.constants.slice(0)`
   end
 
   # check for constant within current scope
   # if inherit is true or self is Object, will also check ancestors
   def const_defined?(name, inherit = true)
-    raise NameError, "wrong constant name #{name}" unless name =~ /^[A-Z]\w*$/
+    name = Opal.const_name!(name)
+
+    raise NameError.new("wrong constant name #{name}", name) unless name =~ Opal::CONST_NAME_REGEXP
 
     %x{
       var scopes = [self.$$scope];
@@ -221,10 +252,20 @@ class Module
   end
 
   def const_get(name, inherit = true)
-    if name['::'] && name != '::'
-      return name.split('::').inject(self){|o, c| o.const_get(c)}
+    name = Opal.const_name!(name)
+
+    %x{
+      if (name.indexOf('::') === 0 && name !== '::'){
+        name = name.slice(2);
+      }
+    }
+
+    if `name.indexOf('::') != -1 && name != '::'`
+      return name.split('::').inject(self) { |o, c| o.const_get(c) }
     end
-    raise NameError, "wrong constant name #{name}" unless name =~ /^[A-Z]\w*$/
+
+    raise NameError.new("wrong constant name #{name}", name) unless name =~ Opal::CONST_NAME_REGEXP
+
     %x{
       var scopes = [self.$$scope];
 
@@ -261,16 +302,16 @@ class Module
       }
     }
 
-    raise NameError, "uninitialized constant #{self}::#{name}"
+    full_const_name = self == Object ? name : "#{self}::#{name}"
+
+    raise NameError.new("uninitialized constant #{full_const_name}", name)
   end
 
   def const_set(name, value)
-    raise NameError, "wrong constant name #{name}" unless name =~ /^[A-Z]\w*$/
+    name = Opal.const_name!(name)
 
-    begin
-      name = name.to_str
-    rescue
-      raise TypeError, 'conversion with #to_str failed'
+    if !(name =~ Opal::CONST_NAME_REGEXP) || name.start_with?('::')
+      raise NameError.new("wrong constant name #{name}", name)
     end
 
     `Opal.casgn(self, name, value)`
@@ -284,41 +325,48 @@ class Module
     end
 
     block ||= case method
-              when Proc
-                method
-              when Method
-                method.to_proc
-              when UnboundMethod
-                lambda do |*args|
-                  bound = method.bind(self)
-                  bound.call *args
-                end
-              else
-                raise TypeError, "wrong argument type #{block.class} (expected Proc/Method)"
-              end
+      when Proc
+        method
+
+      when Method
+        `#{method.to_proc}.$$unbound`
+
+      when UnboundMethod
+        lambda {|*args|
+          bound = method.bind(self)
+          bound.call(*args)
+        }
+
+      else
+        raise TypeError, "wrong argument type #{block.class} (expected Proc/Method)"
+    end
 
     %x{
       var id = '$' + name;
 
-      block.$$jsid = name;
-      block.$$s    = null;
-      block.$$def  = block;
+      block.$$jsid        = name;
+      block.$$s           = null;
+      block.$$def         = block;
+      block.$$define_meth = true;
 
-      if (self.$$is_singleton) {
-        self.$$proto[id] = block;
-      }
-      else {
-        Opal.defn(self, id, block);
-      }
+      Opal.defn(self, id, block);
 
       return name;
     }
   end
 
-  def remove_method(name)
-    `Opal.undef(self, '$' + name)`
+  def remove_method(*names)
+    %x{
+      for (var i = 0, length = names.length; i < length; i++) {
+        Opal.rdef(self, "$" + names[i]);
+      }
+    }
 
     self
+  end
+
+  def singleton_class?
+    `!!self.$$is_singleton`
   end
 
   def include(*mods)
@@ -330,12 +378,45 @@ class Module
           continue;
         }
 
+        if (!mod.$$is_module) {
+          #{raise TypeError, "wrong argument type #{`mod`.class} (expected Module)"};
+        }
+
         #{`mod`.append_features self};
         #{`mod`.included self};
       }
     }
 
     self
+  end
+
+  def included_modules
+    %x{
+      var results;
+
+      var module_chain = function(klass) {
+        var included = [];
+
+        for (var i = 0; i != klass.$$inc.length; i++) {
+          var mod_or_class = klass.$$inc[i];
+          included.push(mod_or_class);
+          included = included.concat(module_chain(mod_or_class));
+        }
+
+        return included;
+      };
+
+      results = module_chain(self);
+
+      // need superclass's modules
+      if (self.$$is_class) {
+          for (var cls = self; cls; cls = cls.$$super) {
+            results = results.concat(module_chain(cls));
+          }
+      }
+
+      return results;
+    }
   end
 
   def include?(mod)
@@ -357,7 +438,7 @@ class Module
       var meth = self.$$proto['$' + name];
 
       if (!meth || meth.$$stub) {
-        #{raise NameError, "undefined method `#{name}' for class `#{self.name}'"};
+        #{raise NameError.new("undefined method `#{name}' for class `#{self.name}'", name)};
       }
 
       return #{UnboundMethod.new(self, `meth`, name)};
@@ -382,7 +463,7 @@ class Module
           continue;
         }
 
-        if (!self.$$is_mod) {
+        if (!self.$$is_module) {
           if (self !== Opal.BasicObject && proto[prop] === Opal.BasicObject.$$proto[prop]) {
             continue;
           }
@@ -409,15 +490,40 @@ class Module
   def extended(mod)
   end
 
-  def module_eval(&block)
-    raise ArgumentError, 'no block given' unless block
+  def method_added(*)
+  end
+
+  def method_removed(*)
+  end
+
+  def method_undefined(*)
+  end
+
+  def module_eval(*args, &block)
+    if block.nil? && `!!Opal.compile`
+      Kernel.raise ArgumentError, "wrong number of arguments (0 for 1..3)" unless (1..3).cover? args.size
+
+      string, file, _lineno = *args
+      default_eval_options = { file: (file || '(eval)'), eval: true }
+      compiling_options = __OPAL_COMPILER_CONFIG__.merge(default_eval_options)
+      compiled = Opal.compile string, compiling_options
+      block = Kernel.proc do
+        %x{
+          return (function(self) {
+            return eval(compiled);
+          })(self)
+        }
+      end
+    elsif args.size > 0
+      Kernel.raise ArgumentError, "wrong number of arguments (#{args.size} for 0)"
+    end
 
     %x{
       var old = block.$$s,
           result;
 
       block.$$s = null;
-      result = block.call(self);
+      result = block.apply(self, [self]);
       block.$$s = old;
 
       return result;
@@ -426,16 +532,16 @@ class Module
 
   alias class_eval module_eval
 
-  def module_exec(&block)
+  def module_exec(*args, &block)
     %x{
       if (block === nil) {
-        throw new Error("no block given");
+        #{raise LocalJumpError, 'no block given'}
       }
 
       var block_self = block.$$s, result;
 
       block.$$s = null;
-      result = block.apply(self, $slice.call(arguments));
+      result = block.apply(self, args);
       block.$$s = block_self;
 
       return result;
@@ -458,9 +564,11 @@ class Module
       }
       else {
         for (var i = 0, length = methods.length; i < length; i++) {
-          var meth = methods[i], func = self.$$proto['$' + meth];
+          var meth = methods[i],
+              id   = '$' + meth,
+              func = self.$$proto[id];
 
-          self.constructor.prototype['$' + meth] = func;
+          Opal.defs(self, id, func);
         }
       }
 
@@ -498,38 +606,6 @@ class Module
     }
   end
 
-  def public(*methods)
-    %x{
-      if (methods.length === 0) {
-        self.$$module_function = false;
-      }
-
-      return nil;
-    }
-  end
-
-  alias private public
-  alias protected public
-  alias nesting public
-
-  def private_class_method(name)
-    `self['$' + name] || nil`
-  end
-  alias public_class_method private_class_method
-
-  def private_method_defined?(obj)
-    false
-  end
-
-  def private_constant(*)
-  end
-
-  alias protected_method_defined? private_method_defined?
-
-  alias public_instance_methods instance_methods
-
-  alias public_method_defined? method_defined?
-
   def remove_class_variable(*)
   end
 
@@ -542,12 +618,31 @@ class Module
   end
 
   def to_s
-    `self.$$name` || "#<#{`self.$$is_mod ? 'Module' : 'Class'`}:0x#{__id__.to_s(16)}>"
+    `Opal.Module.$name.call(self)` || "#<#{`self.$$is_module ? 'Module' : 'Class'`}:0x#{__id__.to_s(16)}>"
   end
 
-  def undef_method(symbol)
-    `Opal.add_stub_for(self.$$proto, "$" + symbol)`
+  def undef_method(*names)
+    %x{
+      for (var i = 0, length = names.length; i < length; i++) {
+        Opal.udef(self, "$" + names[i]);
+      }
+    }
 
     self
+  end
+
+  def instance_variables
+    consts = constants
+    %x{
+      var result = [];
+
+      for (var name in self) {
+        if (self.hasOwnProperty(name) && name.charAt(0) !== '$' && name !== 'constructor' && !#{consts.include?(`name`)}) {
+          result.push('@' + name);
+        }
+      }
+
+      return result;
+    }
   end
 end

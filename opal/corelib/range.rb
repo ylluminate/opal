@@ -38,6 +38,27 @@ class Range
   def each(&block)
     return enum_for :each unless block_given?
 
+    %x{
+      var i, limit;
+
+      if (#@begin.$$is_number && #@end.$$is_number) {
+        if (#@begin % 1 !== 0 || #@end % 1 !== 0) {
+          #{raise TypeError, "can't iterate from Float"}
+        }
+
+        for (i = #@begin, limit = #@end + #{@exclude ? 0 : 1}; i < limit; i++) {
+          block(i);
+        }
+
+        return self;
+      }
+
+      if (#@begin.$$is_string && #@end.$$is_string) {
+        #{@begin.upto(@end, @exclude, &block)}
+        return self;
+      }
+    }
+
     current = @begin
     last    = @end
 
@@ -113,4 +134,10 @@ class Range
   end
 
   alias inspect to_s
+
+  def marshal_load(args)
+    @begin = args[:begin]
+    @end = args[:end]
+    @exclude = args[:excl]
+  end
 end

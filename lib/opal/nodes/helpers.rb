@@ -11,11 +11,20 @@ module Opal
       # ES3 reserved words that aren’t ES5.1 reserved words
       ES3_RESERVED_WORD_EXCLUSIVE = /#{REGEXP_START}(?:int|byte|char|goto|long|final|float|short|double|native|throws|boolean|abstract|volatile|transient|synchronized)#{REGEXP_END}/
 
+      # Prototype special properties.
+      PROTO_SPECIAL_PROPS = /#{REGEXP_START}(?:constructor|displayName|__proto__|__parent__|__noSuchMethod__|__count__)#{REGEXP_END}/
+
+      # Prototype special methods.
+      PROTO_SPECIAL_METHODS = /#{REGEXP_START}(?:hasOwnProperty|valueOf)#{REGEXP_END}/
+
       # Immutable properties of the global object
       IMMUTABLE_PROPS = /#{REGEXP_START}(?:NaN|Infinity|undefined)#{REGEXP_END}/
 
       # Doesn't take in account utf8
       BASIC_IDENTIFIER_RULES = /#{REGEXP_START}[$_a-z][$_a-z\d]*#{REGEXP_END}/i
+
+      # Defining a local function like Array may break everything
+      RESERVED_FUNCTION_NAMES = /#{REGEXP_START}(?:Array)#{REGEXP_END}/
 
 
       def property(name)
@@ -32,6 +41,14 @@ module Opal
 
       def variable(name)
         valid_name?(name.to_s) ? name : "#{name}$"
+      end
+
+      def valid_ivar_name?(name)
+        not (PROTO_SPECIAL_PROPS =~ name or PROTO_SPECIAL_METHODS =~ name)
+      end
+
+      def ivar(name)
+        valid_ivar_name?(name.to_s) ? name : "#{name}$"
       end
 
       # Converts a ruby lvar/arg name to a js identifier. Not all ruby names
@@ -78,7 +95,7 @@ module Opal
         end
 
         with_temp do |tmp|
-          [fragment("((#{tmp} = "), expr(sexp), fragment(") !== nil && (!#{tmp}.$$is_boolean || #{tmp} == true))")]
+          [fragment("((#{tmp} = "), expr(sexp), fragment(") !== nil && #{tmp} != null && (!#{tmp}.$$is_boolean || #{tmp} == true))")]
         end
       end
 
@@ -92,23 +109,29 @@ module Opal
         end
 
         with_temp do |tmp|
-          [fragment("((#{tmp} = "), expr(sexp), fragment(") === nil || (#{tmp}.$$is_boolean && #{tmp} == false))")]
+          [fragment("((#{tmp} = "), expr(sexp), fragment(") === nil || #{tmp} == null || (#{tmp}.$$is_boolean && #{tmp} == false))")]
         end
       end
 
       def js_truthy_optimize(sexp)
         if sexp.type == :call
           mid = sexp[2]
+          receiver_handler_class = (receiver = sexp[1]) && compiler.handlers[receiver.type]
 
-          if mid == :block_given?
-            expr(sexp)
-          elsif Compiler::COMPARE.include? mid.to_s
-            expr(sexp)
-          elsif mid == :"=="
+          # Only operator calls on the truthy_optimize? node classes should be optimized.
+          # Monkey patch method calls might return 'self'/aka a bridged instance and need
+          # the nil check - see discussion at https://github.com/opal/opal/pull/1097
+          allow_optimization_on_type = Compiler::COMPARE.include?(mid.to_s) &&
+            receiver_handler_class &&
+            receiver_handler_class.truthy_optimize?
+
+          if allow_optimization_on_type ||
+            mid == :block_given? ||
+            mid == :"=="
             expr(sexp)
           end
         elsif [:lvar, :self].include? sexp.type
-          [expr(sexp.dup), fragment(" !== false && "), expr(sexp.dup), fragment(" !== nil")]
+          [expr(sexp.dup), fragment(" !== false && "), expr(sexp.dup), fragment(" !== nil && "), expr(sexp.dup), fragment(" != null")]
         end
       end
     end

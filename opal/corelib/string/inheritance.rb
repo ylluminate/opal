@@ -1,3 +1,5 @@
+require 'corelib/string'
+
 class String
   def self.inherited(klass)
     replace = Class.new(String::Wrapper)
@@ -113,5 +115,9 @@ class String::Wrapper
 
   def %(data)
     @literal % data
+  end
+
+  def instance_variables
+    super - ['@literal']
   end
 end

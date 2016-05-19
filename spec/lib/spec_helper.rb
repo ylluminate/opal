@@ -1,3 +1,8 @@
+if ENV['CHECK_COVERAGE']
+  require 'coveralls'
+  Coveralls.wear!
+end
+
 require 'opal'
 
 RSpec.configure do |config|
@@ -5,5 +10,7 @@ RSpec.configure do |config|
   config.run_all_when_everything_filtered = true
   config.filter_run :focus
   config.order = 'random'
-  config.before { Opal.instance_variable_set('@paths', nil) }
+  config.before { Opal.reset_paths! }
+  config.before { Opal::Config.reset! if defined? Opal::Config }
+  config.before { Opal::Processor.reset_cache_key! if defined? Opal::Processor }
 end

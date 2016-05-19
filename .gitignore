@@ -9,3 +9,11 @@ build/
 /node_modules
 /gh-pages
 /tmp
+.ruby-gemset
+.ruby-version
+.rvmrc
+.rspec-local
+/coverage
+
+# Ignore the location of the older (0.8 and below) rubyspec submodule location
+spec/corelib

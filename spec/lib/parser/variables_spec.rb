@@ -1,3 +1,5 @@
+# encoding: utf-8
+
 require 'support/parser_helpers'
 
 describe Opal::Parser do
@@ -66,6 +68,12 @@ describe Opal::Parser do
     parsed("$:").should == [:gvar, :$:]
   end
 
+  it "parses bulitin $-? gvars" do
+    parsed("$-0").should == [:gvar, :$-0]
+    parsed("$-a").should == [:gvar, :$-a]
+    parsed("$-A").should == [:gvar, :$-A]
+  end
+
   it "parses global var assignment" do
     parsed("$foo = 1").should == [:gasgn, :$foo, [:int, 1]]
     parsed("$: = 1").should == [:gasgn, :$:, [:int, 1]]
@@ -88,5 +96,21 @@ describe Opal::Parser do
   it "parses constant assignment" do
     parsed("FOO = 1").should == [:cdecl, :FOO, [:int, 1]]
     parsed("FOO = BAR").should == [:cdecl, :FOO, [:const, :BAR]]
+  end
+
+  describe 'parsing unicode' do
+    if RUBY_ENGINE == 'jruby'
+      before { pending 'Until https://github.com/jruby/jruby/issues/3719 is fixed' }
+    end
+
+    it "works for constants" do
+      parsed("FOOλ = 1").should == [:cdecl, :FOOλ, [:int, 1]]
+    end
+
+    it "works for local variables" do
+      parsed("λ = 1").should == [:lasgn, :λ, [:int, 1]]
+      parsed("fooλ = 1").should == [:lasgn, :fooλ, [:int, 1]]
+      parsed("λfoo = 1").should == [:lasgn, :λfoo, [:int, 1]]
+    end
   end
 end

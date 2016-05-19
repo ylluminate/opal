@@ -84,6 +84,20 @@ module Opal
     # @return [Boolean]
     compiler_option :arity_check, false, :as => :arity_check?
 
+    # @deprecated
+    # @!method freezing?
+    #
+    # stubs out #freeze and #frozen?
+    #
+    # @return [Boolean]
+    compiler_option :freezing, true, :as => :freezing?
+
+    # @deprecated
+    # @!method tainting?
+    #
+    # stubs out #taint, #untaint and #tainted?
+    compiler_option :tainting, true, :as => :tainting?
+
     # @!method irb?
     #
     # compile top level local vars with support for irb style vars
@@ -92,7 +106,7 @@ module Opal
     # @!method dynamic_require_severity
     #
     # how to handle dynamic requires (:error, :warning, :ignore)
-    compiler_option :dynamic_require_severity, :error, :valid_values => [:error, :warning, :ignore]
+    compiler_option :dynamic_require_severity, :warning, :valid_values => [:error, :warning, :ignore]
 
     # @!method requirable?
     #
@@ -103,6 +117,8 @@ module Opal
     #
     # are operators compiled inline
     compiler_option :inline_operators, true, :as => :inline_operators?
+
+    compiler_option :eval, false, as: :eval?
 
     # @return [String] The compiled ruby code
     attr_reader :result
@@ -132,13 +148,19 @@ module Opal
     def compile
       @parser = Parser.new
 
-      @sexp = s(:top, @parser.parse(@source, self.file) || s(:nil))
+      parsed = begin
+        @parser.parse(@source, self.file)
+      rescue => error
+        raise SyntaxError, error.message, error.backtrace
+      end
+
+      @sexp = s(:top, parsed || s(:nil))
       @eof_content = @parser.lexer.eof_content
 
       @fragments = process(@sexp).flatten
 
       @result = @fragments.map(&:code).join('')
-    rescue => error
+    rescue Exception => error
       message = "An error occurred while compiling: #{self.file}\n#{error.message}"
       raise error.class, message, error.backtrace
     end
@@ -199,8 +221,8 @@ module Opal
       Sexp.new(parts)
     end
 
-    def fragment(str, sexp = nil)
-      Fragment.new(str, sexp)
+    def fragment(str, scope, sexp = nil)
+      Fragment.new(str, scope, sexp)
     end
 
     # Used to generate a unique id name per file. These are used
@@ -250,6 +272,43 @@ module Opal
       result
     end
 
+    def in_ensure
+      return unless block_given?
+      @in_ensure = true
+      result = yield
+      @in_ensure = false
+
+      result
+    end
+
+    def in_ensure?
+      @in_ensure
+    end
+
+    # With a block will detect a break in the sexp processed from within
+    # the block (see BreakNode).
+    #
+    # Without a block (but inside a `#has_break?(&block)` call) returns the
+    # current result.
+    #
+    # Works in conjunction with #has_break!
+    #
+    # @return [Boolean] whether a block has been detected
+    def has_break?
+      return @break_detected unless block_given?
+      @break_detected = false
+      result = yield
+      detected = @break_detected
+      @break_detected = nil
+      detected
+    end
+
+    # Marks the current block has having detected a break, but only from inside
+    # a `#has_break?(&block)` block.
+    def has_break!
+      @break_detected = true if @break_detected == false
+    end
+
     def in_case
       return unless block_given?
       old = @case_stmt
@@ -267,7 +326,7 @@ module Opal
     # Process the given sexp by creating a node instance, based on its type,
     # and compiling it to fragments.
     def process(sexp, level = :expr)
-      return fragment('') if sexp == nil
+      return fragment('', scope) if sexp == nil
 
       if handler = handlers[sexp.type]
         return handler.new(sexp, level, self).compile_to_fragments
@@ -306,6 +365,11 @@ module Opal
       return returns s(:nil) unless sexp
 
       case sexp.type
+      # Undefs go from 1 ruby undef a,b,c to multiple JS Opal.udef() calls, so need to treat them as individual statements
+      # and put the return on the last one
+      when :undef
+        last = sexp.pop
+        sexp << returns(last)
       when :break, :next, :redo
         sexp
       when :yield
@@ -361,20 +425,20 @@ module Opal
         sexp[3] = returns(sexp[3] || s(:nil))
         sexp
       else
-        s(:js_return, sexp).tap { |s|
-          s.source = sexp.source
-        }
+        return_sexp = s(:js_return, sexp)
+        return_sexp.source = sexp.source
+        return_sexp
       end
     end
 
     def handle_block_given_call(sexp)
       @scope.uses_block!
       if @scope.block_name
-        fragment("(#{@scope.block_name} !== nil)", sexp)
+        fragment("(#{@scope.block_name} !== nil)", scope, sexp)
       elsif scope = @scope.find_parent_def and scope.block_name
-        fragment("(#{scope.block_name} !== nil)", sexp)
+        fragment("(#{scope.block_name} !== nil)", scope, sexp)
       else
-        fragment("false", sexp)
+        fragment("false", scope, sexp)
       end
     end
   end

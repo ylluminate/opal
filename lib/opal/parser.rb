@@ -30,6 +30,7 @@ module Opal
     # @param file [String] filename for context of ruby code
     # @return [Opal::Sexp] sexp expression tree representing ruby code
     def parse(source, file = '(string)')
+      @yydebug = true if !!ENV['RACC_DEBUG']
       @file = file
       @scopes = []
       @lexer = Lexer.new(source, file)
@@ -330,30 +331,48 @@ module Opal
       [kwarg, kwrest, block]
     end
 
-    def new_args(norm, opt, rest, tail)
+    def new_restarg(rest)
+      restname = rest[1..-1]
+
+      if restname.empty?
+        [s(:restarg)]
+      else
+        scope.add_local restname.to_sym
+        [s(:restarg, restname.to_sym)]
+      end
+    end
+
+    def new_optarg(opt)
+      if opt
+        opt[1..-1].map do |_opt|
+          s(:optarg, _opt[1], _opt[2])
+        end
+      end
+    end
+
+    def new_shadowarg(shadowarg)
+      if shadowarg
+        shadowname = value(shadowarg).to_sym
+        scope.add_local shadowname
+        s(:shadowarg, shadowname)
+      end
+    end
+
+    def new_args(norm, tail)
       res = s(:args)
 
       if norm
         norm.each do |arg|
-          scope.add_local arg
-          res << s(:arg, arg)
-        end
-      end
-
-      if opt
-        opt[1..-1].each do |_opt|
-          res << s(:optarg, _opt[1], _opt[2])
-        end
-      end
-
-      if rest
-        restname = rest.to_s[1..-1]
-
-        if restname.empty?
-          res << s(:restarg)
-        else
-          res << s(:restarg, restname.to_sym)
-          scope.add_local restname.to_sym
+          if arg.is_a?(Sexp)
+            # restarg (a, *b, c)
+            # optarg (a = 1, *b, c)
+            # (order matters)
+            res << arg
+          else
+            # simple arg
+            scope.add_local arg
+            res << s(:arg, arg)
+          end
         end
       end
 
@@ -400,47 +419,73 @@ module Opal
       result
     end
 
-    def new_block_args(norm, opt, rest, block)
-      res = s(:array)
+    def new_kwsplat(hash)
+      s(:kwsplat, hash)
+    end
+
+    def new_method_call_with_block(method_call, block_arg)
+      receiver, method_name, call_args = *method_call.children
+
+      if call_args && block_arg
+        last_arg = call_args.last
+
+        if Sexp === last_arg && last_arg.type == :block_pass
+          raise 'both block argument and literal block are passed'
+        end
+      end
+
+      method_call << block_arg
+    end
+
+    def new_block_arg_splat(rest)
+      if rest
+        r = rest.to_s[1..-1].to_sym
+        scope.add_local r
+        new_splat(nil, s(:lasgn, r))
+      end
+    end
+
+    def new_block_args(norm, tail, shadow_args=nil)
+      res = s(:args)
 
       if norm
         norm.each do |arg|
           if arg.is_a? Symbol
             scope.add_local arg
-            res << s(:lasgn, arg)
-          else
+            res << s(:arg, arg)
+          elsif arg.is_a?(Sexp)
             res << arg
+          elsif arg.nil?
+            res.meta[:has_trailing_comma] = true
           end
         end
       end
 
-      if opt
-        opt[1..-1].each do |_opt|
-          res << s(:lasgn, _opt[1])
+      # kwargs
+      if tail && tail[0]
+        tail[0].each do |kwarg|
+          res << kwarg
         end
       end
 
-      if rest
-        r = rest.to_s[1..-1].to_sym
-        res << new_splat(nil, s(:lasgn, r))
-        scope.add_local r
+      # kwrestarg
+      if tail && tail[1]
+        res << tail[1]
       end
 
-      if block
-        b = block.to_s[1..-1].to_sym
-        res << s(:block_pass, s(:lasgn, b))
-        scope.add_local b
+      # block
+      if tail && tail[2]
+        block = tail[2].to_s[1..-1].to_sym
+        res << s(:block_pass, s(:lasgn, block))
+        scope.add_local block
       end
 
-      res << opt if opt
-
-      args = res.size == 2 && norm ? res[1] : s(:masgn, res)
-
-      if args.type == :array
-        s(:masgn, args)
-      else
-        args
+      # shadow args (m{|;a|})
+      if shadow_args
+        res.concat(shadow_args)
       end
+
+      s(:masgn, res)
     end
 
     def new_call(recv, meth, args = nil)

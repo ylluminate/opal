@@ -22,6 +22,10 @@ module Opal
           end
         end
       end
+      
+      def self.truthy_optimize?
+        false
+      end
 
       attr_reader :compiler, :type
 
@@ -68,7 +72,7 @@ module Opal
       end
 
       def fragment(str)
-        Opal::Fragment.new str, @sexp
+        Opal::Fragment.new str, scope, @sexp
       end
 
       def error(msg)
@@ -145,6 +149,18 @@ module Opal
 
       def while_loop
         @compiler.instance_variable_get(:@while_loop)
+      end
+
+      def has_rescue_else?
+        scope.has_rescue_else?
+      end
+
+      def in_ensure(&block)
+        scope.in_ensure(&block)
+      end
+
+      def in_ensure?
+        scope.in_ensure?
       end
     end
   end

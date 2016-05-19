@@ -1,15 +1,15 @@
 require 'corelib/comparable'
+require 'corelib/regexp'
 
-class String
+class String < `String`
   include Comparable
 
   `def.$$is_string = true`
 
-  `var MUT_STR_ERR_MSG = 'String#%s not supported. Mutable String methods are not supported in Opal.'`
-
   def __id__
     `self.toString()`
   end
+
   alias object_id __id__
 
   def self.try_convert(what)
@@ -99,10 +99,6 @@ class String
         }
       }
     end
-  end
-
-  def <<(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % '<<'
   end
 
   def ==(other)
@@ -228,12 +224,10 @@ class String
     }
   end
 
+  alias byteslice []
+
   def capitalize
     `self.charAt(0).toUpperCase() + self.substr(1).toLowerCase()`
-  end
-
-  def capitalize!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'capitalize!'
   end
 
   def casecmp(other)
@@ -296,10 +290,6 @@ class String
     self
   end
 
-  def chomp!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'chomp!'
-  end
-
   def chop
     %x{
       var length = self.length;
@@ -317,16 +307,13 @@ class String
     }
   end
 
-  def chop!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'chop!'
-  end
-
   def chr
     `self.charAt(0)`
   end
 
   def clone
     copy = `self.slice()`
+    copy.copy_singleton_methods(self)
     copy.initialize_clone(self)
     copy
   end
@@ -363,14 +350,8 @@ class String
     }
   end
 
-  alias dup clone
-
   def downcase
     `self.toLowerCase()`
-  end
-
-  def downcase!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'downcase!'
   end
 
   def each_char(&block)
@@ -378,19 +359,20 @@ class String
 
     %x{
       for (var i = 0, length = self.length; i < length; i++) {
-        #{yield `self.charAt(i)`};
+        Opal.yield1(block, self.charAt(i));
       }
     }
 
     self
   end
 
-  def each_line(separator = $/)
+  def each_line(separator = $/, &block)
     return enum_for :each_line, separator unless block_given?
 
     %x{
       if (separator === nil) {
-        #{yield self};
+        Opal.yield1(block, self);
+
         return self;
       }
 
@@ -401,9 +383,10 @@ class String
       if (separator.length === 0) {
         for (a = self.split(/(\n{2,})/), i = 0, n = a.length; i < n; i += 2) {
           if (a[i] || a[i + 1]) {
-            #{yield `(a[i] || "") + (a[i + 1] || "")`};
+            Opal.yield1(block, (a[i] || "") + (a[i + 1] || ""));
           }
         }
+
         return self;
       }
 
@@ -413,10 +396,10 @@ class String
 
       for (i = 0, length = splitted.length; i < length; i++) {
         if (i < length - 1 || trailing) {
-          #{yield `splitted[i] + separator`};
+          Opal.yield1(block, splitted[i] + separator);
         }
         else {
-          #{yield `splitted[i]`};
+          Opal.yield1(block, splitted[i]);
         }
       }
     }
@@ -449,7 +432,7 @@ class String
   def gsub(pattern, replacement = undefined, &block)
     %x{
       if (replacement === undefined && block === nil) {
-        #{return enum_for :gsub, pattern}
+        return #{enum_for :gsub, pattern};
       }
 
       var result = '', match_data = nil, index = 0, match, _replacement;
@@ -517,10 +500,6 @@ class String
     }
   end
 
-  def gsub!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'gsub!'
-  end
-
   def hash
     `self.toString()`
   end
@@ -531,16 +510,11 @@ class String
 
   def include?(other)
     %x{
-      if (other.$$is_string) {
-        return self.indexOf(other) !== -1;
+      if (!other.$$is_string) {
+        #{other = Opal.coerce_to(other, String, :to_str)}
       }
+      return self.indexOf(other) !== -1;
     }
-
-    unless other.respond_to? :to_str
-      raise TypeError, "no implicit conversion of #{other.class} into String"
-    end
-
-    `self.indexOf(#{other.to_str}) !== -1`
   end
 
   def index(search, offset = undefined)
@@ -653,10 +627,6 @@ class String
     `self.replace(/^\s*/, '')`
   end
 
-  def lstrip!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'lstrip!'
-  end
-
   def match(pattern, pos = undefined, &block)
     if String === pattern || pattern.respond_to?(:to_str)
       pattern = Regexp.new(pattern.to_str)
@@ -739,10 +709,6 @@ class String
     }
   end
 
-  def next!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'next!'
-  end
-
   def oct
     %x{
       var result,
@@ -822,10 +788,6 @@ class String
 
   def reverse
     `self.split('').reverse().join('')`
-  end
-
-  def reverse!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'reverse!'
   end
 
   def rindex(search, offset = undefined)
@@ -972,10 +934,6 @@ class String
 
   alias slice []
 
-  def slice!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'slice!'
-  end
-
   def split(pattern = undefined, limit = undefined)
     %x{
       if (self.length === 0) {
@@ -1015,6 +973,10 @@ class String
 
       result = string.split(pattern);
 
+      if (result.length === 1 && result[0] === string) {
+        return result;
+      }
+
       while ((i = result.indexOf(undefined)) !== -1) {
         result.splice(i, 1);
       }
@@ -1042,6 +1004,10 @@ class String
         return result;
       }
 
+      if (limit >= result.length) {
+        return result;
+      }
+
       i = 0;
       while (match !== null) {
         i++;
@@ -1051,7 +1017,6 @@ class String
         }
         match = pattern.exec(string);
       }
-
       result.splice(limit - 1, result.length - 1, string.slice(index));
       return result;
     }
@@ -1070,10 +1035,6 @@ class String
     }
   end
 
-  def squeeze!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'squeeze!'
-  end
-
   def start_with?(*prefixes)
     %x{
       for (var i = 0, length = prefixes.length; i < length; i++) {
@@ -1090,10 +1051,6 @@ class String
 
   def strip
     `self.replace(/^\s*/, '').replace(/[\s\u0000]*$/, '')`
-  end
-
-  def strip!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'strip!'
   end
 
   def sub(pattern, replacement = undefined, &block)
@@ -1148,15 +1105,7 @@ class String
     }
   end
 
-  def sub!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'sub!'
-  end
-
   alias succ next
-
-  def succ!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'succ!'
-  end
 
   def sum(n = 16)
     %x{
@@ -1190,10 +1139,6 @@ class String
 
       return #{self.class.new `str`};
     }
-  end
-
-  def swapcase!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'swapcase!'
   end
 
   def to_f
@@ -1369,8 +1314,8 @@ class String
           in_range = false;
           for (i = 0; i < to_length; i++) {
             ch = to_chars[i];
-            if (last_from == null) {
-              last_from = ch;
+            if (last_to == null) {
+              last_to = ch;
               to_chars_expanded.push(ch);
             }
             else if (ch === '-') {
@@ -1386,7 +1331,7 @@ class String
               }
             }
             else if (in_range) {
-              start = last_from.charCodeAt(0);
+              start = last_to.charCodeAt(0);
               end = ch.charCodeAt(0);
               if (start > end) {
                 #{raise ArgumentError, "invalid range \"#{`String.fromCharCode(start)`}-#{`String.fromCharCode(end)`}\" in string transliteration"}
@@ -1396,7 +1341,7 @@ class String
               }
               to_chars_expanded.push(ch);
               in_range = null;
-              last_from = null;
+              last_to = null;
             }
             else {
               to_chars_expanded.push(ch);
@@ -1433,10 +1378,6 @@ class String
       }
       return new_str;
     }
-  end
-
-  def tr!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'tr!'
   end
 
   def tr_s(from, to)
@@ -1601,24 +1542,8 @@ class String
     }
   end
 
-  def tr_s!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'tr_s!'
-  end
-
   def upcase
     `self.toUpperCase()`
-  end
-
-  def upcase!(other)
-    raise NotImplementedError, `MUT_STR_ERR_MSG` % 'upcase!'
-  end
-
-  def freeze
-    self
-  end
-
-  def frozen?
-    true
   end
 
   def upto(stop, excl = false, &block)
@@ -1636,7 +1561,9 @@ class String
           if (excl && a === b) {
             break;
           }
+
           block(String.fromCharCode(a));
+
           a += 1;
         }
 
@@ -1649,7 +1576,9 @@ class String
           if (excl && a === b) {
             break;
           }
+
           block(a.toString());
+
           a += 1;
         }
 
@@ -1659,7 +1588,9 @@ class String
           if (excl && s === stop) {
             break;
           }
+
           block(s);
+
           s = #{`s`.succ};
         }
 
@@ -1753,6 +1684,14 @@ class String
       return null;
     }
   }
+
+  def instance_variables
+    []
+  end
+
+  def self._load(*args)
+    self.new(*args)
+  end
 end
 
 Symbol = String

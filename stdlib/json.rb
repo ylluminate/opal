@@ -4,6 +4,8 @@ module JSON
         $hasOwn = Opal.hasOwnProperty;
 
     function to_opal(value, options) {
+      var klass, arr, hash, i, ii, k;
+
       switch (typeof value) {
         case 'string':
           return value;
@@ -21,33 +23,32 @@ module JSON
           if (!value) return nil;
 
           if (value.$$is_array) {
-            var arr = #{`options.array_class`.new};
+            arr = #{`options.array_class`.new};
 
-            for (var i = 0, ii = value.length; i < ii; i++) {
+            for (i = 0, ii = value.length; i < ii; i++) {
               #{`arr`.push(`to_opal(value[i], options)`)};
             }
 
             return arr;
           }
           else {
-            var hash = #{`options.object_class`.new};
+            hash = #{`options.object_class`.new};
 
-            for (var k in value) {
+            for (k in value) {
               if ($hasOwn.call(value, k)) {
                 #{`hash`[`k`] = `to_opal(value[k], options)`};
               }
             }
 
-            var klass;
-            if ((klass = #{`hash`[JSON.create_id]}) != nil) {
-              klass = Opal.cget(klass);
+            if (!options.parse && (klass = #{`hash`[JSON.create_id]}) != nil) {
+              klass = Opal.get(klass);
               return #{`klass`.json_create(`hash`)};
             }
             else {
               return hash;
             }
           }
-      }
+        }
     };
   }
 
@@ -66,11 +67,15 @@ module JSON
   end
 
   def self.parse(source, options = {})
-    from_object(`$parse(source)`, options)
+    from_object(`$parse(source)`, options.merge(parse: true))
   end
 
   def self.parse!(source, options = {})
     parse(source, options)
+  end
+
+  def self.load(source, options = {})
+    from_object(`$parse(source)`, options)
   end
 
   # Raw js object => opal object
@@ -78,7 +83,7 @@ module JSON
     options[:object_class] ||= Hash
     options[:array_class]  ||= Array
 
-    `to_opal(js_object, options.smap)`
+    `to_opal(js_object, options.$$smap)`
   end
 
   def self.generate(obj, options = {})
@@ -136,27 +141,22 @@ end
 class Hash
   def to_json
     %x{
-      var inspect = [],
-          keys = self.keys,
-          _map = self.map,
-          smap = self.smap,
-          map, khash;
+      var result = [];
 
-      for (var i = 0, length = keys.length; i < length; i++) {
-        var key = keys[i];
+      for (var i = 0, keys = self.$$keys, length = keys.length, key, value; i < length; i++) {
+        key = keys[i];
 
         if (key.$$is_string) {
-          map = smap;
-          khash = key;
+          value = self.$$smap[key];
         } else {
-          map = _map;
-          khash = key.$hash();
+          value = key.value;
+          key = key.key;
         }
 
-        inspect.push(#{`key`.to_s.to_json} + ':' + #{`map[khash]`.to_json});
+        result.push(#{`key`.to_s.to_json} + ':' + #{`value`.to_json});
       }
 
-      return '{' + inspect.join(', ') + '}';
+      return '{' + result.join(', ') + '}';
     }
   end
 end

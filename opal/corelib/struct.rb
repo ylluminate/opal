@@ -3,20 +3,42 @@ require 'corelib/enumerable'
 class Struct
   include Enumerable
 
-  def self.new(name = undefined, *args, &block)
-    return super unless self == Struct
-
-    if name[0] == name[0].upcase
-      Struct.const_set(name, new(*args))
-    else
-      args.unshift name
-
-      Class.new(self) {
-        args.each { |arg| define_struct_attribute arg }
-
-        instance_eval(&block) if block
-      }
+  def self.new(const_name, *args, &block)
+    if const_name
+      begin
+        const_name = Opal.const_name!(const_name)
+      rescue TypeError, NameError
+        args.unshift(const_name)
+        const_name = nil
+      end
     end
+
+    args.map do |arg|
+      Opal.coerce_to!(arg, String, :to_str)
+    end
+
+    klass = Class.new(self) do
+      args.each { |arg| define_struct_attribute(arg) }
+
+      class << self
+        def new(*args)
+          instance = allocate
+          `#{instance}.$$data = {};`
+          instance.initialize(*args)
+          instance
+        end
+
+        alias [] new
+      end
+    end
+
+    klass.module_eval(&block) if block
+
+    if const_name
+      Struct.const_set(const_name, klass)
+    end
+
+    klass
   end
 
   def self.define_struct_attribute(name)
@@ -26,7 +48,13 @@ class Struct
 
     members << name
 
-    attr_accessor name
+    define_method name do
+      `self.$$data[name]`
+    end
+
+    define_method "#{name}=" do |value|
+      `self.$$data[name] = value`
+    end
   end
 
   def self.members
@@ -45,13 +73,13 @@ class Struct
     }
   end
 
-  class << self
-    alias [] new
-  end
-
   def initialize(*args)
-    members.each_with_index {|name, index|
-      instance_variable_set "@#{name}", args[index]
+    if args.length > self.class.members.length
+      raise ArgumentError, "struct size differs"
+    end
+
+    self.class.members.each_with_index {|name, index|
+      self[name] = args[index]
     }
   end
 
@@ -59,64 +87,140 @@ class Struct
     self.class.members
   end
 
+  def hash
+    Hash.new(`self.$$data`).hash
+  end
+
   def [](name)
     if Integer === name
-      raise IndexError, "offset #{name} too small for struct(size:#{members.size})" if name < -members.size
-      raise IndexError, "offset #{name} too large for struct(size:#{members.size})" if name >= members.size
+      raise IndexError, "offset #{name} too small for struct(size:#{self.class.members.size})" if name < -self.class.members.size
+      raise IndexError, "offset #{name} too large for struct(size:#{self.class.members.size})" if name >= self.class.members.size
 
-      name = members[name]
+      name = self.class.members[name]
     elsif String === name
-      raise NameError, "no member '#{name}' in struct" unless members.include?(name.to_sym)
+      %x{
+        if(!self.$$data.hasOwnProperty(name)) {
+          #{raise NameError.new("no member '#{name}' in struct", name)}
+        }
+      }
     else
       raise TypeError, "no implicit conversion of #{name.class} into Integer"
     end
 
-    instance_variable_get "@#{name}"
+    name = Opal.coerce_to!(name, String, :to_str)
+    `self.$$data[name]`
   end
 
   def []=(name, value)
     if Integer === name
-      raise IndexError, "offset #{name} too small for struct(size:#{members.size})" if name < -members.size
-      raise IndexError, "offset #{name} too large for struct(size:#{members.size})" if name >= members.size
+      raise IndexError, "offset #{name} too small for struct(size:#{self.class.members.size})" if name < -self.class.members.size
+      raise IndexError, "offset #{name} too large for struct(size:#{self.class.members.size})" if name >= self.class.members.size
 
-      name = members[name]
+      name = self.class.members[name]
     elsif String === name
-      raise NameError, "no member '#{name}' in struct" unless members.include?(name.to_sym)
+      raise NameError.new("no member '#{name}' in struct", name) unless self.class.members.include?(name.to_sym)
     else
       raise TypeError, "no implicit conversion of #{name.class} into Integer"
     end
 
-    instance_variable_set "@#{name}", value
+    name = Opal.coerce_to!(name, String, :to_str)
+    `self.$$data[name] = value`
+  end
+
+  def ==(other)
+    return false unless other.instance_of?(self.class)
+
+    %x{
+      var recursed1 = {}, recursed2 = {};
+
+      function _eqeq(struct, other) {
+        var key, a, b;
+
+        recursed1[#{`struct`.__id__}] = true;
+        recursed2[#{`other`.__id__}] = true;
+
+        for (key in struct.$$data) {
+          a = struct.$$data[key];
+          b = other.$$data[key];
+
+          if (#{Struct === `a`}) {
+            if (!recursed1.hasOwnProperty(#{`a`.__id__}) || !recursed2.hasOwnProperty(#{`b`.__id__})) {
+              if (!_eqeq(a, b)) {
+                return false;
+              }
+            }
+          } else {
+            if (!#{`a` == `b`}) {
+              return false;
+            }
+          }
+        }
+
+        return true;
+      }
+
+      return _eqeq(self, other);
+    }
+  end
+
+  def eql?(other)
+    return false unless other.instance_of?(self.class)
+
+    %x{
+      var recursed1 = {}, recursed2 = {};
+
+      function _eqeq(struct, other) {
+        var key, a, b;
+
+        recursed1[#{`struct`.__id__}] = true;
+        recursed2[#{`other`.__id__}] = true;
+
+        for (key in struct.$$data) {
+          a = struct.$$data[key];
+          b = other.$$data[key];
+
+          if (#{Struct === `a`}) {
+            if (!recursed1.hasOwnProperty(#{`a`.__id__}) || !recursed2.hasOwnProperty(#{`b`.__id__})) {
+              if (!_eqeq(a, b)) {
+                return false;
+              }
+            }
+          } else {
+            if (!#{`a`.eql?(`b`)}) {
+              return false;
+            }
+          }
+        }
+
+        return true;
+      }
+
+      return _eqeq(self, other);
+    }
   end
 
   def each
     return enum_for(:each){self.size} unless block_given?
 
-    members.each { |name| yield self[name] }
+    self.class.members.each { |name| yield self[name] }
     self
   end
 
   def each_pair
     return enum_for(:each_pair){self.size} unless block_given?
 
-    members.each { |name| yield name, self[name] }
+    self.class.members.each { |name| yield [name, self[name]] }
     self
   end
 
-  def eql?(other)
-    hash == other.hash || other.each_with_index.all? {|object, index|
-      self[members[index]] == object
-    }
-  end
-
   def length
-    members.length
+    self.class.members.length
   end
 
   alias size length
 
   def to_a
-    members.map { |name| self[name] }
+    self.class.members.map { |name| self[name] }
   end
 
   alias values to_a
@@ -124,7 +228,7 @@ class Struct
   def inspect
     result = "#<struct "
 
-    if self.class == Struct
+    if Struct === self && self.class.name
       result += "#{self.class} "
     end
 
@@ -140,7 +244,7 @@ class Struct
   alias to_s inspect
 
   def to_h
-    members.inject({}) {|h, name| h[name] = self[name]; h}
+    self.class.members.inject({}) {|h, name| h[name] = self[name]; h}
   end
 
   def values_at(*args)
@@ -155,5 +259,10 @@ class Struct
       }
       return result;
     }
+  end
+
+  def self._load(args)
+    attributes = args.values_at(*members)
+    self.new(*attributes)
   end
 end

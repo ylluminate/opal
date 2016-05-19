@@ -14,6 +14,7 @@ module Opal
       attr_accessor :block_name
 
       attr_reader :scope_name
+      attr_reader :locals
       attr_reader :ivars
       attr_reader :gvars
 
@@ -29,7 +30,9 @@ module Opal
       attr_accessor :uses_super
       attr_accessor :uses_zuper
 
-      attr_accessor :catch_return
+      attr_accessor :catch_return, :has_break
+
+      attr_accessor :rescue_else_sexp
 
       def initialize(*)
         super
@@ -168,14 +171,15 @@ module Opal
       end
 
       def has_local?(local)
-        return true if @locals.include? local or @args.include? local
+        return true if @locals.include? local or @args.include? local or @temps.include? local
         return @parent.has_local?(local) if @parent and @type == :iter
-
         false
       end
 
-      def add_scope_temp(*tmps)
-        @temps.push(*tmps)
+      def add_scope_temp(tmp)
+        return if has_temp?(tmp)
+
+        @temps.push(tmp)
       end
 
       def has_temp?(tmp)
@@ -275,6 +279,22 @@ module Opal
 
       def uses_block?
         @uses_block
+      end
+
+      def has_rescue_else?
+        !!rescue_else_sexp
+      end
+
+      def in_ensure
+        return unless block_given?
+
+        @in_ensure = true
+        result = yield
+        @in_ensure = false
+      end
+
+      def in_ensure?
+        !!@in_ensure
       end
     end
   end

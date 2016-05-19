@@ -8,6 +8,10 @@ module Opal
       def compile
         push type.to_s
       end
+      
+      def self.truthy_optimize?
+        true
+      end
     end
 
     class NumericNode < Base
@@ -18,6 +22,10 @@ module Opal
       def compile
         push value.to_s
         wrap '(', ')' if recv?
+      end
+      
+      def self.truthy_optimize?
+        true
       end
     end
 
@@ -129,7 +137,7 @@ module Opal
             push part.inspect
           elsif part.type == :evstr
             push "("
-            push expr(part[1])
+            push part[1] ? expr(part[1]) : '""'
             push ")"
           elsif part.type == :str
             push part[1].inspect

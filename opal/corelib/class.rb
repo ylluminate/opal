@@ -1,28 +1,23 @@
 require 'corelib/module'
 
 class Class
-  def self.new(sup = Object, &block)
+  def self.new(superclass = Object, &block)
     %x{
-      if (!sup.$$is_class || sup.$$is_mod) {
-        #{raise TypeError, "superclass must be a Class"};
+      if (!superclass.$$is_class) {
+        throw Opal.TypeError.$new("superclass must be a Class");
       }
 
-      function AnonClass(){};
-      var klass      = Opal.boot(sup, AnonClass)
-      klass.$$name   = nil;
-      klass.$$parent = sup;
+      var alloc = Opal.boot_class_alloc(null, function(){}, superclass)
+      var klass = Opal.setup_class_object(null, alloc, superclass.$$name, superclass.constructor);
+
+      klass.$$super = superclass;
+      klass.$$parent = superclass;
 
       // inherit scope from parent
-      Opal.create_scope(sup.$$scope, klass);
+      Opal.create_scope(superclass.$$scope, klass);
 
-      sup.$inherited(klass);
-
-      if (block !== nil) {
-        var block_self = block.$$s;
-        block.$$s = null;
-        block.call(klass);
-        block.$$s = block_self;
-      }
+      superclass.$inherited(klass);
+      Opal.module_initialize(klass, block);
 
       return klass;
     }
@@ -51,5 +46,20 @@ class Class
 
   def superclass
     `self.$$super || nil`
+  end
+
+  def to_s
+    %x{
+      var singleton_of = self.$$singleton_of;
+
+      if (singleton_of && (singleton_of.$$is_class || singleton_of.$$is_module)) {
+        return #{"#<Class:#{`singleton_of`.name}>"};
+      }
+      else if (singleton_of) {
+        // a singleton class created from an object
+        return #{"#<Class:#<#{`singleton_of.$$class`.name}:0x#{`singleton_of.$$id`.to_s(16)}>>"};
+      }
+      return #{super()};
+    }
   end
 end

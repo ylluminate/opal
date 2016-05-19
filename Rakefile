@@ -6,10 +6,9 @@ Bundler.require
 Bundler::GemHelper.install_tasks
 
 import 'tasks/github.rake'
-import 'tasks/documenting.rake'
 import 'tasks/testing.rake'
 import 'tasks/building.rake'
 import 'tasks/linting.rake'
 import 'tasks/benchmarking.rake'
 
-task :default => [:rspec, :mspec_node, :cruby_tests]
+task :default => [:rspec, :mspec_nodejs, :cruby_tests]

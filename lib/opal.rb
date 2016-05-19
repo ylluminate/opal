@@ -4,8 +4,9 @@ require 'opal/erb'
 require 'opal/sprockets'
 require 'opal/paths'
 require 'opal/version'
+require 'opal/errors'
 
 # Opal is a ruby to javascript compiler, with a runtime for running
-# in any javascript environment.
+# in any JavaScript environment.
 module Opal
 end

@@ -46,6 +46,12 @@ class SingletonMethodSuperSpec
       super 2, *[3, 4]
     end
   end
+
+  module M
+    def self.foo
+      super
+    end
+  end
 end
 
 class MultipleSuperSpec
@@ -93,6 +99,7 @@ describe "The 'super' keyword" do
       @kls = SingletonMethodSuperSpec::A
     end
 
+    # TODO: This is not correct behavior (MRI returns true)
     it "does not pass the block to super" do
       @obj.super_args(1, 2, 3) { }.should be_false
       @kls.super_args() { }.should be_false
@@ -107,6 +114,10 @@ describe "The 'super' keyword" do
     it "does not break when multiple super statements are in body" do
       lambda { MultipleSuperSpec.new.to_s }.should_not raise_error
     end
+  end
+
+  it "works on module singleton methods (see issue #935)" do
+    lambda { SingletonMethodSuperSpec::M.foo }.should raise_error(NoMethodError)
   end
 end
 

@@ -16,11 +16,21 @@ module Opal
     class UndefNode < Base
       handle :undef
 
-      children :mid
-
-      # FIXME: we should be setting method to a stub method here
       def compile
-        push "delete #{scope.proto}#{mid_to_jsid mid[1].to_s}"
+        children.each do |child|
+          value = child[1]
+          statements = []
+          if child[0] == :js_return
+             value = value[1]
+             statements << expr(s(:js_return))
+          end
+          statements << "Opal.udef(self, '$#{value.to_s}');"
+          if children.length > 1 && child != children.first
+            line *statements
+          else
+            push *statements
+          end
+        end
       end
     end
 
@@ -40,10 +50,9 @@ module Opal
       def compile
         if scope.class? or scope.module?
           scope.methods << "$#{new_name[1]}"
-          push "Opal.defn(self, '$#{new_name[1]}', #{scope.proto}#{old_mid})"
-        else
-          push "self.$$proto#{new_mid} = self.$$proto#{old_mid}"
         end
+
+        push "Opal.alias(self, '#{new_name[1]}', '#{old_name[1]}')"
       end
     end
 

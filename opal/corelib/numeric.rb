@@ -3,207 +3,36 @@ require 'corelib/comparable'
 class Numeric
   include Comparable
 
-  `def.$$is_number = true`
-
-  def __id__
-    `(self * 2) + 1`
-  end
-  alias object_id __id__
-
-  def coerce(other, type = :operation)
-    %x{
-      if (other.$$is_number) {
-        return [self, other];
-      }
-      else {
-        return #{other.coerce(self)};
-      }
-    }
-  rescue
-    case type
-    when :operation
-      raise TypeError, "#{other.class} can't be coerced into Numeric"
-
-    when :comparison
-      raise ArgumentError, "comparison of #{self.class} with #{other.class} failed"
+  def coerce(other)
+    if other.instance_of? self.class
+      return [other, self]
     end
+
+    [Float(other), Float(self)]
   end
 
-  def send_coerced(method, other)
-    type = case method
+  def __coerced__(method, other)
+    begin
+      a, b = other.coerce(self)
+    rescue
+      case method
       when :+, :-, :*, :/, :%, :&, :|, :^, :**
-        :operation
+        raise TypeError, "#{other.class} can't be coerce into Numeric"
 
       when :>, :>=, :<, :<=, :<=>
-        :comparison
+        raise ArgumentError, "comparison of #{self.class} with #{other.class} failed"
+      end
     end
 
-    a, b = coerce(other, type)
     a.__send__ method, b
   end
 
-  def +(other)
-    %x{
-      if (other.$$is_number) {
-        return self + other;
-      }
-      else {
-        return #{send_coerced :+, other};
-      }
-    }
-  end
-
-  def -(other)
-    %x{
-      if (other.$$is_number) {
-        return self - other;
-      }
-      else {
-        return #{send_coerced :-, other};
-      }
-    }
-  end
-
-  def *(other)
-    %x{
-      if (other.$$is_number) {
-        return self * other;
-      }
-      else {
-        return #{send_coerced :*, other};
-      }
-    }
-  end
-
-  def /(other)
-    %x{
-      if (other.$$is_number) {
-        return self / other;
-      }
-      else {
-        return #{send_coerced :/, other};
-      }
-    }
-  end
-
-  alias fdiv /
-
-  def %(other)
-    %x{
-      if (other.$$is_number) {
-        if (other < 0 || self < 0) {
-          return (self % other + other) % other;
-        }
-        else {
-          return self % other;
-        }
-      }
-      else {
-        return #{send_coerced :%, other};
-      }
-    }
-  end
-
-  def &(other)
-    %x{
-      if (other.$$is_number) {
-        return self & other;
-      }
-      else {
-        return #{send_coerced :&, other};
-      }
-    }
-  end
-
-  def |(other)
-    %x{
-      if (other.$$is_number) {
-        return self | other;
-      }
-      else {
-        return #{send_coerced :|, other};
-      }
-    }
-  end
-
-  def ^(other)
-    %x{
-      if (other.$$is_number) {
-        return self ^ other;
-      }
-      else {
-        return #{send_coerced :^, other};
-      }
-    }
-  end
-
-  def <(other)
-    %x{
-      if (other.$$is_number) {
-        return self < other;
-      }
-      else {
-        return #{send_coerced :<, other};
-      }
-    }
-  end
-
-  def <=(other)
-    %x{
-      if (other.$$is_number) {
-        return self <= other;
-      }
-      else {
-        return #{send_coerced :<=, other};
-      }
-    }
-  end
-
-  def >(other)
-    %x{
-      if (other.$$is_number) {
-        return self > other;
-      }
-      else {
-        return #{send_coerced :>, other};
-      }
-    }
-  end
-
-  def >=(other)
-    %x{
-      if (other.$$is_number) {
-        return self >= other;
-      }
-      else {
-        return #{send_coerced :>=, other};
-      }
-    }
-  end
-
   def <=>(other)
-    %x{
-      if (other.$$is_number) {
-        return self > other ? 1 : (self < other ? -1 : 0);
-      }
-      else {
-        return #{send_coerced :<=>, other};
-      }
-    }
-  rescue ArgumentError
+    if equal? other
+      return 0
+    end
+
     nil
-  end
-
-  def <<(count)
-    count = Opal.coerce_to! count, Integer, :to_int
-
-    `#{count} > 0 ? self << #{count} : self >> -#{count}`
-  end
-
-  def >>(count)
-    count = Opal.coerce_to! count, Integer, :to_int
-
-    `#{count} > 0 ? self >> #{count} : self << -#{count}`
   end
 
   def [](bit)
@@ -215,52 +44,33 @@ class Numeric
   end
 
   def +@
-    `+self`
+    self
   end
 
   def -@
-    `-self`
+    0 - self
   end
 
-  def ~
-    `~self`
-  end
-
-  def **(other)
-    %x{
-      if (other.$$is_number) {
-        return Math.pow(self, other);
-      }
-      else {
-        return #{send_coerced :**, other};
-      }
-    }
-  end
-
-  def ==(other)
-    %x{
-      if (other.$$is_number) {
-        return self == Number(other);
-      }
-      else if (#{other.respond_to? :==}) {
-        return #{other == self};
-      }
-      else {
-        return false;
-      }
-    }
+  def %(other)
+    self - other * self.div(other)
   end
 
   def abs
-    `Math.abs(self)`
+    self < 0 ? -self : self
   end
+
+  def abs2
+    self * self
+  end
+
+  def angle
+    self < 0 ? Math::PI : 0
+  end
+
+  alias arg angle
 
   def ceil
-    `Math.ceil(self)`
-  end
-
-  def chr(encoding=undefined)
-    `String.fromCharCode(self)`
+    to_f.ceil
   end
 
   def conj
@@ -269,296 +79,111 @@ class Numeric
 
   alias conjugate conj
 
-  def downto(stop, &block)
-    return enum_for(:downto, stop){
-      raise ArgumentError, "comparison of #{self.class} with #{stop.class} failed" unless Numeric === stop
-      stop > self ? 0 : self - stop + 1
-    } unless block_given?
-
-    %x{
-      if (!stop.$$is_number) {
-        #{raise ArgumentError, "comparison of #{self.class} with #{stop.class} failed"}
-      }
-      for (var i = self; i >= stop; i--) {
-        if (block(i) === $breaker) {
-          return $breaker.$v;
-        }
-      }
-    }
-
-    self
+  def denominator
+    to_r.denominator
   end
 
-  alias eql? ==
+  def div(other)
+    raise ZeroDivisionError, "divided by o" if other == 0
 
-  def equal?(other)
-    self == other || `isNaN(self) && isNaN(other)`
+    (self / other).floor
   end
 
-  def even?
-    `self % 2 === 0`
+  def divmod(other)
+    [div(other), self % other]
+  end
+
+  def fdiv(other)
+    self.to_f / other
   end
 
   def floor
-    `Math.floor(self)`
+    to_f.floor
   end
 
-  def gcd(other)
-    unless Integer === other
-      raise TypeError, 'not an integer'
-    end
-
-    %x{
-      var min = Math.abs(self),
-          max = Math.abs(other);
-
-      while (min > 0) {
-        var tmp = min;
-
-        min = max % min;
-        max = tmp;
-      }
-
-      return max;
-    }
+  def i
+    Complex(0, self)
   end
 
-  def gcdlcm(other)
-    [gcd, lcm]
+  def imag
+    0
   end
 
-  def hash
-    `'Numeric:'+self.toString()`
-  end
+  alias imaginary imag
 
   def integer?
-    `self % 1 === 0`
-  end
-
-  def is_a?(klass)
-    return true if klass == Fixnum && Integer === self
-    return true if klass == Integer && Integer === self
-    return true if klass == Float && Float === self
-
-    super
-  end
-
-  alias kind_of? is_a?
-
-  def instance_of?(klass)
-    return true if klass == Fixnum && Integer === self
-    return true if klass == Integer && Integer === self
-    return true if klass == Float && Float === self
-
-    super
-  end
-
-  def lcm(other)
-    unless Integer === other
-      raise TypeError, 'not an integer'
-    end
-
-    %x{
-      if (self == 0 || other == 0) {
-        return 0;
-      }
-      else {
-        return Math.abs(self * other / #{gcd(other)});
-      }
-    }
+    false
   end
 
   alias magnitude abs
 
   alias modulo %
 
-  def next
-    `self + 1`
-  end
-
   def nonzero?
-    `self == 0 ? nil : self`
+    zero? ? nil : self
   end
 
-  def odd?
-    `self % 2 !== 0`
+  def numerator
+    to_r.numerator
   end
 
-  def ord
+  alias phase arg
+
+  def polar
+    return abs, arg
+  end
+
+  def quo(other)
+    Opal.coerce_to!(self, Rational, :to_r) / other
+  end
+
+  def real
     self
   end
 
-  def pred
-    `self - 1`
+  def real?
+    true
   end
 
-  def round(ndigits=0)
-    %x{
-      var scale = Math.pow(10, ndigits);
-      return Math.round(self * scale) / scale;
-    }
+  def rect
+    [self, 0]
   end
 
-  def step(limit, step = 1, &block)
-    return enum_for :step, limit, step unless block
+  alias rectangular rect
 
-    raise ArgumentError, 'step cannot be 0' if `step == 0`
-
-    %x{
-      var value = self;
-
-      if (limit === Infinity || limit === -Infinity) {
-        block(value);
-        return self;
-      }
-
-      if (step > 0) {
-        while (value <= limit) {
-          block(value);
-          value += step;
-        }
-      }
-      else {
-        while (value >= limit) {
-          block(value);
-          value += step;
-        }
-      }
-    }
-
-    self
+  def round(digits = undefined)
+    to_f.round(digits)
   end
 
-  alias succ next
-
-  def times(&block)
-    return enum_for :times unless block
-
-    %x{
-      for (var i = 0; i < self; i++) {
-        if (block(i) === $breaker) {
-          return $breaker.$v;
-        }
-      }
-    }
-
-    self
+  def to_c
+    Complex(self, 0)
   end
 
-  def to_f
-    self
+  def to_int
+    to_i
   end
 
-  def to_i
-    `parseInt(self, 10)`
-  end
-
-  alias to_int to_i
-
-  def to_s(base = 10)
-    if base < 2 || base > 36
-      raise ArgumentError, 'base must be between 2 and 36'
-    end
-
-    `self.toString(base)`
-  end
-
-  alias inspect to_s
-
-  def divmod(rhs)
-    q = (self / rhs).floor
-    r = self % rhs
-
-    [q, r]
-  end
-
-  def upto(stop, &block)
-    return enum_for(:upto, stop){
-      raise ArgumentError, "comparison of #{self.class} with #{stop.class} failed" unless Numeric === stop
-      stop < self ? 0 : stop - self + 1
-    } unless block_given?
-
-    %x{
-      if (!stop.$$is_number) {
-        #{raise ArgumentError, "comparison of #{self.class} with #{stop.class} failed"}
-      }
-      for (var i = self; i <= stop; i++) {
-        if (block(i) === $breaker) {
-          return $breaker.$v;
-        }
-      }
-    }
-
-    self
+  def truncate
+    to_f.truncate
   end
 
   def zero?
-    `self == 0`
-  end
-
-  # Since bitwise operations are 32 bit, declare it to be so.
-  def size
-    4
-  end
-
-  def nan?
-    `isNaN(self)`
-  end
-
-  def finite?
-    `self != Infinity && self != -Infinity && !isNaN(self)`
-  end
-
-  def infinite?
-    %x{
-      if (self == Infinity) {
-        return +1;
-      }
-      else if (self == -Infinity) {
-        return -1;
-      }
-      else {
-        return nil;
-      }
-    }
+    self == 0
   end
 
   def positive?
-    `1 / self > 0`
+    self > 0
   end
 
   def negative?
-    `1 / self < 0`
-  end
-end
-
-Fixnum = Numeric
-
-class Integer < Numeric
-  def self.===(other)
-    %x{
-      if (!other.$$is_number) {
-        return false;
-      }
-
-      return (other % 1) === 0;
-    }
-  end
-end
-
-class Float < Numeric
-  def self.===(other)
-    `!!other.$$is_number`
+    self < 0
   end
 
-  INFINITY = `Infinity`
-  MAX      = `Number.MAX_VALUE`
-  MIN      = `Number.MIN_VALUE`
-  NAN      = `NaN`
+  def dup
+    raise TypeError, "can't dup #{self.class}"
+  end
 
-  if defined?(`Number.EPSILON`)
-    EPSILON = `Number.EPSILON`
-  else
-    EPSILON = `2.2204460492503130808472633361816E-16`
+  def clone
+    raise TypeError, "can't clone #{self.class}"
   end
 end

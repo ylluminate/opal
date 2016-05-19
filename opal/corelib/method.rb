@@ -12,6 +12,10 @@ class Method
     @method.arity
   end
 
+  def parameters
+    `#{@method}.$$parameters`
+  end
+
   def call(*args, &block)
     %x{
       #@method.$$p = block;
@@ -27,11 +31,16 @@ class Method
   end
 
   def to_proc
-    @method
+    %x{
+      var proc = function () { return self.$call.apply(self, $slice.call(arguments)); };
+      proc.$$unbound = #@method;
+      proc.$$is_lambda = true;
+      return proc;
+    }
   end
 
   def inspect
-    "#<Method: #{@obj.class}##@name}>"
+    "#<Method: #{@receiver.class}##@name>"
   end
 end
 
@@ -48,7 +57,15 @@ class UnboundMethod
     @method.arity
   end
 
+  def parameters
+    `#{@method}.$$parameters`
+  end
+
   def bind(object)
+    # TODO: re-enable when Module#< is fixed
+    # unless object.class <= @owner
+    #   raise TypeError, "can't bind singleton method to a different class"
+    # end
     Method.new(object, @method, @name)
   end
 

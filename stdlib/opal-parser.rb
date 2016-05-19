@@ -1,12 +1,18 @@
 require 'opal/compiler'
 require 'opal/erb'
 require 'opal/version'
-require 'encoding'
 
 module Kernel
   def eval(str)
-    code = Opal.compile str, file: '(eval)'
-    `eval(#{code})`
+    str = Opal.coerce_to!(str, String, :to_str)
+    default_eval_options = { file: '(eval)', eval: true }
+    compiling_options = __OPAL_COMPILER_CONFIG__.merge(default_eval_options)
+    code = Opal.compile str, compiling_options
+    %x{
+      return (function(self) {
+        return eval(#{code});
+      })(self)
+    }
   end
 
   def require_remote url

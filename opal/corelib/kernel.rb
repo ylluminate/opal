@@ -1,10 +1,14 @@
 module Kernel
   def method_missing(symbol, *args, &block)
-    raise NoMethodError, "undefined method `#{symbol}' for #{inspect}"
+    raise NoMethodError.new("undefined method `#{symbol}' for #{inspect}", symbol, args)
   end
 
   def =~(obj)
     false
+  end
+
+  def !~(obj)
+    not(self =~ obj)
   end
 
   def ===(other)
@@ -13,6 +17,9 @@ module Kernel
 
   def <=>(other)
     %x{
+      // set guard for infinite recursion
+      self.$$comparable = true;
+
       var x = #{self == other};
 
       if (x && x !== nil) {
@@ -28,7 +35,7 @@ module Kernel
       var meth = self['$' + name];
 
       if (!meth || meth.$$stub) {
-        #{raise NameError, "undefined method `#{name}' for class `#{self.class}'"};
+        #{raise NameError.new("undefined method `#{name}' for class `#{self.class}'", name)};
       }
 
       return #{Method.new(self, `meth`, name)};
@@ -98,7 +105,30 @@ module Kernel
   def copy_instance_variables(other)
     %x{
       for (var name in other) {
-        if (name.charAt(0) !== '$') {
+        if (other.hasOwnProperty(name) && name.charAt(0) !== '$') {
+          self[name] = other[name];
+        }
+      }
+    }
+  end
+
+  def copy_singleton_methods(other)
+    %x{
+      var name;
+
+      if (other.hasOwnProperty('$$meta')) {
+        var other_singleton_class_proto = Opal.get_singleton_class(other).$$proto;
+        var self_singleton_class_proto = Opal.get_singleton_class(self).$$proto;
+
+        for (name in other_singleton_class_proto) {
+          if (name.charAt(0) === '$' && other_singleton_class_proto.hasOwnProperty(name)) {
+            self_singleton_class_proto[name] = other_singleton_class_proto[name];
+          }
+        }
+      }
+
+      for (name in other) {
+        if (name.charAt(0) === '$' && name.charAt(1) !== '$' && other.hasOwnProperty(name)) {
           self[name] = other[name];
         }
       }
@@ -109,6 +139,7 @@ module Kernel
     copy = self.class.allocate
 
     copy.copy_instance_variables(self)
+    copy.copy_singleton_methods(self)
     copy.initialize_clone(self)
 
     copy
@@ -118,23 +149,8 @@ module Kernel
     initialize_copy(other)
   end
 
-  def define_singleton_method(name, body = nil, &block)
-    body ||= block
-
-    unless body
-      raise ArgumentError, "tried to create Proc object without a block"
-    end
-
-    %x{
-      var jsid   = '$' + name;
-      body.$$jsid = name;
-      body.$$s    = null;
-      body.$$def  = body;
-
-      #{singleton_class}.$$proto[jsid] = body;
-
-      return self;
-    }
+  def define_singleton_method(name, method = undefined, &block)
+    singleton_class.define_method(name, method, &block)
   end
 
   def dup
@@ -161,7 +177,13 @@ module Kernel
   end
 
   def exit(status = true)
-    $__at_exit__.reverse.each(&:call) if $__at_exit__
+    $__at_exit__ ||= []
+
+    while $__at_exit__.size > 0
+      block = $__at_exit__.pop
+      block.call
+    end
+
     status = 0 if `status === true` # it's in JS because it can be null/undef
     `Opal.exit(status);`
     nil
@@ -173,6 +195,10 @@ module Kernel
 
       for (var i = mods.length - 1; i >= 0; i--) {
         var mod = mods[i];
+
+        if (!mod.$$is_module) {
+          #{raise TypeError, "wrong argument type #{`mod`.class} (expected Module)"};
+        }
 
         #{`mod`.append_features `singleton`};
         #{`mod`.extended self};
@@ -723,17 +749,8 @@ module Kernel
     }
   end
 
-  def freeze
-    @___frozen___ = true
-    self
-  end
-
-  def frozen?
-    @___frozen___ || false
-  end
-
   def hash
-    "#{self.class}:#{self.class.__id__}:#{__id__}"
+    __id__
   end
 
   def initialize_copy(other)
@@ -744,34 +761,65 @@ module Kernel
   end
 
   def instance_of?(klass)
-    `self.$$class === klass`
+    %x{
+      if (!klass.$$is_class && !klass.$$is_module) {
+        #{raise TypeError, 'class or module required'};
+      }
+
+      return self.$$class === klass;
+    }
   end
 
   def instance_variable_defined?(name)
+    name = Opal.instance_variable_name!(name)
+
     `Opal.hasOwnProperty.call(self, name.substr(1))`
   end
 
   def instance_variable_get(name)
+    name = Opal.instance_variable_name!(name)
+
     %x{
-      var ivar = self[name.substr(1)];
+      var ivar = self[Opal.ivar(name.substr(1))];
 
       return ivar == null ? nil : ivar;
     }
   end
 
   def instance_variable_set(name, value)
-    `self[name.substr(1)] = value`
+    name = Opal.instance_variable_name!(name)
+
+    `self[Opal.ivar(name.substr(1))] = value`
+  end
+
+  def remove_instance_variable(name)
+    name = Opal.instance_variable_name!(name)
+
+    %x{
+      var key = Opal.ivar(name.substr(1)),
+          val;
+      if (self.hasOwnProperty(key)) {
+        val = self[key];
+        delete self[key];
+        return val;
+      }
+    }
+
+    raise NameError, "instance variable #{name} not defined"
   end
 
   def instance_variables
     %x{
-      var result = [];
+      var result = [], ivar;
 
       for (var name in self) {
-        if (name.charAt(0) !== '$') {
-          if (name !== '$$class' && name !== '$$id') {
-            result.push('@' + name);
+        if (self.hasOwnProperty(name) && name.charAt(0) !== '$') {
+          if (name.substr(-1) === '$') {
+            ivar = name.slice(0, name.length - 1);
+          } else {
+            ivar = name;
           }
+          result.push('@' + ivar);
         }
       }
 
@@ -899,7 +947,13 @@ module Kernel
   end
 
   def is_a?(klass)
-    `Opal.is_a(self, klass)`
+    %x{
+      if (!klass.$$is_class && !klass.$$is_module) {
+        #{raise TypeError, 'class or module required'};
+      }
+
+      return Opal.is_a(self, klass);
+    }
   end
 
   alias kind_of? is_a?
@@ -912,15 +966,15 @@ module Kernel
 
   def load(file)
     file = Opal.coerce_to!(file, String, :to_str)
-    `Opal.load(Opal.normalize_loadable_path(#{file}))`
+    `Opal.load(#{file})`
   end
 
-  def loop(&block)
+  def loop
+    return enum_for :loop unless block_given?
+
     %x{
       while (true) {
-        if (block() === $breaker) {
-          return $breaker.$v;
-        }
+        #{yield}
       }
     }
 
@@ -940,11 +994,6 @@ module Kernel
 
     nil
   end
-
-  def private_methods(*)
-    []
-  end
-  alias private_instance_methods private_methods
 
   def proc(&block)
     unless block
@@ -973,20 +1022,30 @@ module Kernel
     $stderr.puts(*strs) unless $VERBOSE.nil? || strs.empty?
   end
 
-  def raise(exception = undefined, string = undefined)
+  def raise(exception = undefined, string = nil, _backtrace = nil)
     %x{
-      if (exception == null && #$!) {
+      if (exception == null && #$! !== nil) {
         throw #$!;
       }
-
       if (exception == null) {
         exception = #{RuntimeError.new};
       }
       else if (exception.$$is_string) {
         exception = #{RuntimeError.new exception};
       }
-      else if (exception.$$is_class) {
-        exception = #{exception.new string};
+      // using respond_to? and not an undefined check to avoid method_missing matching as true
+      else if (exception.$$is_class && #{exception.respond_to?(:exception)}) {
+        exception = #{exception.exception string};
+      }
+      else if (#{exception.kind_of?(Exception)}) {
+        // exception is fine
+      }
+      else {
+        exception = #{TypeError.new 'exception class/object expected'};
+      }
+
+      if (#$! !== nil) {
+        Opal.exceptions.push(#$!);
       }
 
       #$! = exception;
@@ -1003,9 +1062,10 @@ module Kernel
         return Math.random();
       }
       else if (max.$$is_range) {
-        var arr = #{max.to_a};
+        var min = max.begin, range = max.end - min;
+        if(!max.exclude) range++;
 
-        return arr[#{rand(`arr.length`)}];
+        return self.$rand(range) + min;
       }
       else {
         return Math.floor(Math.random() *
@@ -1015,7 +1075,7 @@ module Kernel
   end
 
   def respond_to?(name, include_all = false)
-    return true if respond_to_missing?(name)
+    return true if respond_to_missing?(name, include_all)
 
     %x{
       var body = self['$' + name];
@@ -1028,25 +1088,26 @@ module Kernel
     false
   end
 
-  def respond_to_missing?(method_name)
+  def respond_to_missing?(method_name, include_all = false)
     false
   end
 
   def require(file)
     file = Opal.coerce_to!(file, String, :to_str)
-    `Opal.require(Opal.normalize_loadable_path(#{file}))`
+    `Opal.require(#{file})`
   end
 
   def require_relative(file)
     Opal.try_convert!(file, String, :to_str)
     file = File.expand_path File.join(`Opal.current_file`, '..', file)
 
-    `Opal.require(Opal.normalize_loadable_path(#{file}))`
+    `Opal.require(#{file})`
   end
 
   # `path` should be the full path to be found in registered modules (`Opal.modules`)
   def require_tree(path)
     path = File.expand_path(path)
+    path = '' if path == '.'
 
     %x{
       for (var name in Opal.modules) {
@@ -1092,14 +1153,6 @@ module Kernel
       Opal.coerce_to!(str, String, :to_s)
   end
 
-  def taint
-    self
-  end
-
-  def tainted?
-    false
-  end
-
   def tap(&block)
     yield self
     self
@@ -1113,10 +1166,23 @@ module Kernel
     "#<#{self.class}:0x#{__id__.to_s(16)}>"
   end
 
-  alias untaint taint
-
-  def Rational(*args)
-    #Just a stub to let unrelated rubyspecs run.
-    nil
+  def catch(sym)
+    yield
+  rescue UncaughtThrowError => e
+    return e.arg if e.sym == sym
+    raise
   end
+
+  def throw(*args)
+    raise UncaughtThrowError.new(args)
+  end
+
+  # basic implementation of open, delegate to File.open
+  def open(*args, &block)
+    File.open(*args, &block)
+  end
+end
+
+class Object
+  include Kernel
 end
